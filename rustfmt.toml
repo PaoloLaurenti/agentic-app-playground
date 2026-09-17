@@ -1,0 +1,5 @@
+# Stable options only: nightly-only options (imports_granularity, group_imports,
+# wrap_comments) would be silently ignored by cargo fmt.
+edition = "2024"
+max_width = 100
+newline_style = "Unix"
