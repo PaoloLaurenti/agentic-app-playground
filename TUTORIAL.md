@@ -1,204 +1,204 @@
-# Costruire un'applicazione agentica in Rust su Amazon Bedrock, osservata con Langfuse
+# Building an agentic application in Rust on Amazon Bedrock, observed with Langfuse
 
-> Percorso di apprendimento passo-passo, pensato per chi parte da un'idea rudimentale di cosa sia un harness per LLM.
-> Ogni passo è una casella: segna `[x]` quando è fatto. Stato dell'arte: settembre 2026.
+> A step-by-step learning path, written for someone starting from a rough idea of what an LLM harness is.
+> Every step is a checkbox: tick `[x]` when it is done. State of the art: September 2026.
 
 ---
 
-## 0. Come usare questo tutorial
+## 0. How to use this tutorial
 
-### 0.1 Struttura
+### 0.1 Structure
 
-- I moduli vanno in ordine. I moduli **1–9** sono il cuore (concetti, Bedrock, Langfuse, harness, prompt, contesto, pipeline). I moduli **10–15** sono la parte "production" (router, valutazione, test, sicurezza, osservabilità, deploy). Il modulo **16** raccoglie approfondimenti opzionali.
-- Ogni modulo ha sempre le stesse sezioni: **Obiettivo**, **Perché conta**, **Passi** (le caselle da spuntare), **Fatto quando** (criterio oggettivo di completamento), **Autoverifica** (cosa devi saper spiegare a voce), **Approfondimenti**.
-- Legenda: ⏱ stima di tempo · 🧪 esperimento da annotare nel Diario (Appendice E) · ⚠️ attenzione · 💡 concetto chiave · 📚 lettura consigliata · 🔭 passo specifico su Langfuse.
-- Ogni decisione non banale va scritta come ADR (Architecture Decision Record, Appendice C). Ogni esperimento con numeri va nel Diario. Sono due abitudini che valgono più di qualsiasi strumento.
+- The modules go in order. Modules **1–9** are the core (concepts, Bedrock, Langfuse, harness, prompts, context, pipeline). Modules **10–15** are the production half (router, evaluation, testing, security, observability, deployment). Module **16** collects optional deep dives.
+- Every module has the same sections: **Goal**, **Why it matters**, **Steps** (the checkboxes), **Done when** (an objective completion criterion), **Self-check** (what you must be able to explain out loud), **Going deeper**.
+- Legend: ⏱ time estimate · 🧪 experiment to record in the Work Log (Appendix E) · ⚠️ watch out · 💡 key concept · 📚 recommended reading · 🔭 Langfuse-specific step.
+- Every non-trivial decision becomes an ADR (Architecture Decision Record, Appendix C). Every experiment with numbers goes in the Work Log. These two habits are worth more than any tool.
 
-### 0.2 Stato di avanzamento
+### 0.2 Progress
 
-- [ ] Modulo 1 · Fondamenti: LLM, harness, agenti
-- [ ] Modulo 2 · Setup ambiente e repository Rust
-- [ ] Modulo 3 · Attivare Amazon Bedrock
-- [ ] Modulo 4 · Prima chiamata a Bedrock da Rust
-- [ ] Modulo 5 · Attivare Langfuse e vedere le chiamate
-- [ ] Modulo 6 · Prompt engineering sistematico con Langfuse Prompt Management
-- [ ] Modulo 7 · Tool calling e primo agent loop
-- [ ] Modulo 8 · Gestione del contesto (context engineering)
-- [ ] Modulo 9 · La pipeline del progetto guida
-- [ ] Modulo 10 · Router di modelli
-- [ ] Modulo 11 · Valutare i modelli con dataset ed esperimenti
-- [ ] Modulo 12 · Suite di test anti-regressione
-- [ ] Modulo 13 · Sicurezza, privacy e guardrail
-- [ ] Modulo 14 · Osservabilità in produzione con Langfuse
-- [ ] Modulo 15 · Deploy in produzione
-- [ ] Modulo 16 · Approfondimenti opzionali
+- [ ] Module 1 · Foundations: LLMs, harnesses, agents
+- [ ] Module 2 · Environment and Rust repository setup
+- [ ] Module 3 · Enabling Amazon Bedrock
+- [ ] Module 4 · First Bedrock call from Rust
+- [ ] Module 5 · Enabling Langfuse and seeing the calls
+- [ ] Module 6 · Systematic prompt engineering with Langfuse Prompt Management
+- [ ] Module 7 · Tool calling and the first agent loop
+- [ ] Module 8 · Context engineering
+- [ ] Module 9 · The guiding project's pipeline
+- [ ] Module 10 · Model router
+- [ ] Module 11 · Evaluating models with datasets and experiments
+- [ ] Module 12 · Regression test suite
+- [ ] Module 13 · Security, privacy and guardrails
+- [ ] Module 14 · Production observability with Langfuse
+- [ ] Module 15 · Deploying to production
+- [ ] Module 16 · Optional deep dives
 
-### 0.3 Il progetto guida
+### 0.3 The guiding project
 
-Per non imparare "a vuoto", tutti i moduli costruiscono un'unica applicazione che cresce passo dopo passo. È ispirata al documento interno *AI Prompt Processing Pipeline* (Notion), preso come spunto e non come specifica: la sezione sui modelli di quel documento è datata e va ignorata.
+So that you are not learning in a vacuum, every module builds a single application that grows step by step. It is inspired by an internal document, *AI Prompt Processing Pipeline* (Notion), taken as a starting point rather than a specification: that document's section on models is dated and should be ignored.
 
-**Un assistente conversazionale per un servizio sanitario**, che per ogni messaggio dell'utente esegue:
+**A conversational assistant for a healthcare service**, which for every user message runs:
 
-1. `STATE_READ` · legge stato conversazione e profilo utente dal DB (nessuna chiamata LLM).
-2. `SAFETY` · classificatore LLM che fa da cancello: se rileva un rischio acuto, risponde con un messaggio di escalation e si ferma.
-3. `RETRIEVAL` · ricerca su una knowledge base (vettoriale, nessuna chiamata LLM).
-4. `GENERATION` · chiamata LLM principale con **output strutturato**: testo di risposta più segnali (stato affettivo, argomenti, riferimenti alla KB, hint per il profilo).
-5. `GUARDRAILS` · seconda chiamata LLM che valida la risposta; se fallisce, `GENERATION` viene rieseguita con istruzioni correttive.
-6. `STATE_WRITE` · aggiornamento sincrono dello stato conversazione.
-7. `PROFILE_UPDATE` · chiamata LLM **asincrona** che aggiorna il profilo utente dopo la consegna della risposta.
+1. `STATE_READ` · reads conversation state and user profile from the database (no LLM call).
+2. `SAFETY` · an LLM classifier acting as a gate: if it detects acute risk, it returns an escalation message and stops.
+3. `RETRIEVAL` · searches a knowledge base (vector search, no LLM call).
+4. `GENERATION` · the main LLM call with **structured output**: the reply text plus signals (affective state, topics, knowledge base references, profile hints).
+5. `GUARDRAILS` · a second LLM call that validates the reply; on failure, `GENERATION` re-runs with corrective instructions.
+6. `STATE_WRITE` · synchronous conversation state update.
+7. `PROFILE_UPDATE` · an **asynchronous** LLM call that updates the user profile after the reply has been delivered.
 
-Vedrai comparire in questa pipeline quasi tutti i temi del tutorial: prompt diversi per step diversi, modelli diversi per step diversi (router), gestione del contesto (finestra di turni a budget di token, profilo compatto), guardrail, streaming con validazione in parallelo, aggiornamenti atomici, una traccia Langfuse per ogni messaggio con uno span per step, test per step.
+Almost every topic in this tutorial shows up in that pipeline: different prompts per step, different models per step (the router), context management (a token-budgeted turn window, a compact profile), guardrails, streaming with parallel validation, atomic updates, one Langfuse trace per message with a span per step, tests per step.
 
-⚠️ Il dominio sanitario è reale ma qui è un **playground**: usa solo dati sintetici, mai dati di pazienti veri.
+⚠️ The healthcare domain is real but this is a **playground**: use synthetic data only, never real patient data.
 
-### 0.4 Decisioni di partenza (assunzioni esplicite)
+### 0.4 Starting decisions (explicit assumptions)
 
-| Tema | Decisione | Perché |
+| Topic | Decision | Why |
 |---|---|---|
-| Linguaggio | Rust (edition 2024), runtime `tokio` | Richiesta esplicita. Ottimo per capire l'harness "a mano": niente magia. |
-| Provider | Amazon Bedrock tramite **Converse API** con l'AWS SDK for Rust ufficiale | Converse è l'API unificata di Bedrock: stessi tipi per tutti i modelli, tool use, streaming, caching, structured output. |
-| Regione | Un'area **EU** (`eu-west-1` o `eu-central-1`) e inference profile `eu.*` | Residenza dei dati (GDPR). Vedi Modulo 3. |
-| Modelli | Famiglia Claude su Bedrock come base; almeno un modello non-Anthropic (Amazon Nova, Llama, Mistral) per imparare a confrontare e a instradare | Il router e la valutazione hanno senso solo con alternative reali. |
-| Piattaforma LLM engineering | **Langfuse**, usato in tutte e quattro le sue aree: tracing, prompt management, evaluation (dataset, esperimenti, LLM-as-a-judge, annotazioni), dashboard e alert | È open source, ha una regione Cloud in UE e si può self-hostare; si integra da Rust via OpenTelemetry e API pubblica. Vedi Modulo 5. |
-| Framework agentici | **Nessuno** nel core: l'harness si scrive a mano. Rig (il framework Rust più maturo) è un confronto opzionale nel Modulo 16 | Scrivere il loop una volta è il modo più rapido per capire cosa fanno i framework. |
-| Persistenza | SQLite in locale (`rusqlite` o `sqlx`), PostgreSQL con `pgvector` quando serve il vettoriale | Semplice da avviare, realistico per la produzione. |
+| Language | Rust (edition 2024), `tokio` runtime | Explicit requirement. Excellent for understanding the harness by hand: no magic. |
+| Provider | Amazon Bedrock through the **Converse API** with the official AWS SDK for Rust | Converse is Bedrock's unified API: the same types for every model, plus tool use, streaming, caching and structured output. |
+| Region | An **EU** region (`eu-west-1` or `eu-central-1`) and `eu.*` inference profiles | Data residency (GDPR). See Module 3. |
+| Models | The Claude family on Bedrock as the baseline, plus at least one non-Anthropic model (Amazon Nova, Llama, Mistral) so that comparison and routing are meaningful | A router and an evaluation suite only make sense with real alternatives. |
+| LLM engineering platform | **Langfuse**, used across all four of its areas: tracing, prompt management, evaluation (datasets, experiments, LLM-as-a-judge, annotations), dashboards and alerts | It is open source, has an EU cloud region and can be self-hosted; it integrates from Rust over OpenTelemetry and its public API. See Module 5. |
+| Agent frameworks | **None** in the core: the harness is written by hand. Rig (the most mature Rust framework) is an optional comparison in Module 16 | Writing the loop once is the fastest way to understand what frameworks do for you. |
+| Persistence | SQLite locally (`rusqlite` or `sqlx`), PostgreSQL with `pgvector` when vector search is needed | Easy to start, realistic for production. |
 
 ---
 
-## Modulo 1 · Fondamenti: LLM, harness, agenti
+## Module 1 · Foundations: LLMs, harnesses, agents
 
-⏱ 3–4 ore · solo lettura e appunti, niente codice.
+⏱ 3–4 hours · reading and notes only, no code.
 
-**Obiettivo.** Avere un vocabolario preciso prima di scrivere una riga di codice.
+**Goal.** Build a precise vocabulary before writing a line of code.
 
-**Perché conta.** Il 70% degli errori nelle applicazioni agentiche nasce da un modello mentale sbagliato di cosa fa (e non fa) un LLM: si scrive un prompt "che funziona" senza sapere perché, e poi non si riesce a fare debugging.
+**Why it matters.** Seventy percent of the mistakes in agentic applications come from a wrong mental model of what an LLM does and does not do: you write a prompt that "works" without knowing why, and then you cannot debug it.
 
-### Passi
+### Steps
 
-- [ ] 1.1 💡 **Cos'è un LLM per chi lo integra.** Una funzione `(sequenza di token) → (distribuzione sul prossimo token)`, campionata in loop. Non ha memoria tra una chiamata e l'altra: tutto quello che "sa" della conversazione glielo rimandi tu ogni volta. Scrivi questa frase con parole tue nel Diario.
-- [ ] 1.2 💡 **Token, context window, costo.** I token sono l'unità di misura di tutto: costo (prezzo per milione di token in ingresso e in uscita), limiti (context window), latenza (i token in uscita si pagano in tempo). Un testo italiano vale circa 1 token ogni 3–4 caratteri. La context window dei modelli Claude 5 su Bedrock è 1M token, ma "entra" non vuol dire "funziona bene": la qualità degrada quando riempi la finestra di rumore.
-- [ ] 1.3 💡 **I ruoli dei messaggi.** `system` (le istruzioni dell'operatore: chi sei, cosa fai, in che formato rispondi), `user`, `assistant`. Il system prompt è la leva più potente che hai.
-- [ ] 1.4 💡 **Parametri di inferenza.** `max_tokens` (tetto sull'output), `temperature` (0 = più deterministico, non "deterministico"), `top_p`, `stop_sequences`. Per i modelli Claude più recenti conta anche il **thinking adattivo** e il livello di **effort** (quanto il modello "ragiona" prima di rispondere). Nota: su Claude 5 `temperature` e `top_p` non sono più accettati; si controlla la profondità con `effort`.
-- [ ] 1.5 💡 **Tool calling (function calling).** Il modello non esegue niente: emette un blocco `tool_use` con nome e argomenti JSON, tu esegui la funzione e rimandi un blocco `tool_result`. Il loop `chiamata → tool_use → esegui → tool_result → chiamata…` è **l'harness**. Un "agente" è un harness in cui il modello decide quali tool usare e quando fermarsi.
-- [ ] 1.6 💡 **Structured output.** Chiedere al modello di rispondere in un JSON che rispetta uno schema. Si ottiene in due modi: forzando un tool con lo schema voluto, oppure con la funzione nativa di structured output (su Bedrock: `outputConfig.textFormat` con `json_schema`). Serve ovunque nel progetto guida.
-- [ ] 1.7 💡 **Streaming.** Ricevere i token man mano invece che tutti alla fine. Cambia la latenza percepita (time-to-first-token) e complica il codice (eventi parziali, tool use a pezzi).
-- [ ] 1.8 📚 **Workflow vs agenti.** Leggi *Building effective agents* (Anthropic). Impara a distinguere: **workflow** (il codice decide il flusso, l'LLM fa i singoli step) e **agente** (l'LLM decide il flusso). Il progetto guida è un workflow con pezzi agentici: è la forma giusta per la maggior parte dei prodotti.
-- [ ] 1.9 📚 **I cinque pattern di composizione.** Prompt chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer. Per ognuno scrivi nel Diario una riga: "nel progetto guida lo userei per…". (Suggerimento: `SAFETY` è routing, `GUARDRAILS` è evaluator-optimizer.)
-- [ ] 1.10 💡 **Quando NON serve un agente.** Quattro domande: il task è multi-step e difficile da specificare a priori? Il valore giustifica costo e latenza extra? Il modello è capace su questo tipo di task? Gli errori sono recuperabili? Se una risposta è "no", resta su chiamata singola o workflow.
-- [ ] 1.11 💡 **Non determinismo.** Anche a `temperature = 0` due chiamate identiche possono dare output diversi. Questo cambia tutto nei test (Modulo 12): non si testa "l'output è X", si testa "l'output rispetta le proprietà P, su N ripetizioni, oltre una soglia".
-- [ ] 1.12 💡 **Osservare un sistema LLM.** Tre parole che useremo sempre: **trace** (tutto ciò che succede per una richiesta), **observation** (un pezzo della trace: uno span generico, una *generation* cioè una chiamata al modello, un evento), **score** (un numero o un'etichetta attaccati a una trace o a un'observation: qualità, feedback, esito guardrail). Sono il modello dati di Langfuse e di quasi tutti gli strumenti del settore.
-- [ ] 1.13 Compila il glossario (Appendice A) con le tue parole. Se una definizione non ti viene, non hai ancora capito il concetto.
+- [ ] 1.1 💡 **What an LLM is, for the person integrating it.** A function `(token sequence) → (distribution over the next token)`, sampled in a loop. It has no memory between calls: everything it "knows" about the conversation is what you send it every time. Write that sentence in your own words in the Work Log.
+- [ ] 1.2 💡 **Tokens, context window, cost.** Tokens are the unit of measurement for everything: cost (price per million input and output tokens), limits (the context window), latency (output tokens are paid for in time). Italian text runs at roughly one token per 3–4 characters. The context window of Claude 5 models on Bedrock is 1M tokens, but "it fits" is not "it works well": quality degrades when you fill the window with noise.
+- [ ] 1.3 💡 **Message roles.** `system` (operator instructions: who you are, what you do, in what format you answer), `user`, `assistant`. The system prompt is the most powerful lever you have.
+- [ ] 1.4 💡 **Inference parameters.** `max_tokens` (output ceiling), `temperature` (0 means more deterministic, not "deterministic"), `top_p`, `stop_sequences`. On recent Claude models what matters instead is **adaptive thinking** and the **effort** level (how much the model reasons before answering). Note: Claude 5 no longer accepts `temperature` and `top_p`; you control depth with `effort`.
+- [ ] 1.5 💡 **Tool calling (function calling).** The model executes nothing: it emits a `tool_use` block with a name and JSON arguments, you run the function and send back a `tool_result` block. The loop `call → tool_use → execute → tool_result → call…` **is the harness**. An "agent" is a harness in which the model decides which tools to use and when to stop.
+- [ ] 1.6 💡 **Structured output.** Asking the model to answer with JSON that conforms to a schema. There are two ways: force a tool whose schema is the one you want, or use the native structured output feature (on Bedrock: `outputConfig.textFormat` with `json_schema`). You need it everywhere in the guiding project.
+- [ ] 1.7 💡 **Streaming.** Receiving tokens as they are produced instead of all at the end. It changes perceived latency (time to first token) and complicates the code (partial events, tool use arriving in pieces).
+- [ ] 1.8 📚 **Workflows versus agents.** Read *Building effective agents* (Anthropic). Learn the distinction: a **workflow** is where your code decides the flow and the LLM handles individual steps; an **agent** is where the LLM decides the flow. The guiding project is a workflow with agentic parts, which is the right shape for most products.
+- [ ] 1.9 📚 **The five composition patterns.** Prompt chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer. For each one write a line in the Work Log: "in the guiding project I would use this for…". (Hint: `SAFETY` is routing, `GUARDRAILS` is evaluator-optimizer.)
+- [ ] 1.10 💡 **When you do NOT need an agent.** Four questions: is the task multi-step and hard to specify up front? Does the value justify the extra cost and latency? Is the model capable at this kind of task? Are errors recoverable? If any answer is no, stay with a single call or a workflow.
+- [ ] 1.11 💡 **Non-determinism.** Even at `temperature = 0`, two identical calls can produce different output. This changes everything about testing (Module 12): you do not test "the output is X", you test "the output satisfies properties P, over N repetitions, above a threshold".
+- [ ] 1.12 💡 **Observing an LLM system.** Three words we will use constantly: **trace** (everything that happens for one request), **observation** (a piece of a trace: a generic span, a *generation* meaning a model call, an event), **score** (a number or a label attached to a trace or an observation: quality, feedback, guardrail outcome). This is the Langfuse data model, and roughly the industry's.
+- [ ] 1.13 Fill in the glossary (Appendix A) in your own words. If a definition does not come to you, you have not understood the concept yet.
 
-**Fatto quando** hai scritto nel Diario le definizioni di: token, context window, system prompt, tool use, harness, agente, workflow, structured output, streaming, effort, trace, observation, score.
+**Done when** you have written definitions in the Work Log for: token, context window, system prompt, tool use, harness, agent, workflow, structured output, streaming, effort, trace, observation, score.
 
-**Autoverifica.** Spiega a voce, in due minuti, perché "l'LLM ricorda la conversazione" è falso e cosa fa davvero il tuo codice per dare quell'illusione.
+**Self-check.** Explain out loud, in two minutes, why "the LLM remembers the conversation" is false, and what your code actually does to create that illusion.
 
-**Approfondimenti.** *Effective context engineering for AI agents* e *Writing effective tools for agents* (Anthropic Engineering): li riprenderemo nei Moduli 7 e 8.
+**Going deeper.** *Effective context engineering for AI agents* and *Writing effective tools for agents* (Anthropic Engineering): we return to both in Modules 7 and 8.
 
 ---
 
-## Modulo 2 · Setup ambiente e repository Rust
+## Module 2 · Environment and Rust repository setup
 
-⏱ 2–3 ore.
+⏱ 2–3 hours.
 
-**Obiettivo.** Un workspace Cargo con la struttura definitiva, CI minima, lint e test che girano a vuoto.
+**Goal.** A Cargo workspace with the final structure, minimal CI, and lints and tests running on an empty tree.
 
-**Perché conta.** Separare fin da subito "cosa parla con il provider", "cosa decide il flusso" e "cosa osserva" è ciò che renderà possibili mock, test, router e tracing nei moduli successivi.
+**Why it matters.** Separating "what talks to the provider", "what decides the flow" and "what observes" from day one is what makes mocks, tests, the router and tracing possible later.
 
-### Passi
+### Steps
 
-- [ ] 2.1 Verifica la toolchain: `rustup update stable`, `cargo --version` (qui risulta già installato cargo 1.97). Installa `cargo install cargo-nextest cargo-watch cargo-lambda just`. Valuta `cargo-insta` (snapshot test) e `cargo-deny` (audit dipendenze).
-- [ ] 2.2 Crea il workspace. Struttura suggerita (una crate per responsabilità, così i confini restano netti):
+- [ ] 2.1 Check the toolchain. Rust is pinned in `.tool-versions` (asdf); verify with `rustc --version`. Install `cargo install cargo-nextest cargo-watch cargo-lambda just`. Consider `cargo-insta` (snapshot tests) and `cargo-deny` (dependency audit).
+- [ ] 2.2 Create the workspace. Suggested layout, one crate per responsibility so the boundaries stay sharp:
 
   ```text
   agentic-app-playground/
   ├── Cargo.toml                 # [workspace]
-  ├── justfile                   # comandi ricorrenti (test, eval, run)
+  ├── justfile                   # recurring commands (test, eval, run)
   ├── crates/
-  │   ├── llm-core/              # tipi neutri: Message, ContentBlock, ToolSpec, LlmRequest/Response, trait LlmClient
-  │   ├── llm-bedrock/           # implementazione LlmClient su aws-sdk-bedrockruntime (Converse)
-  │   ├── observability/         # init tracing + OpenTelemetry, exporter Langfuse, helper per attributi, client API Langfuse
-  │   ├── prompts/               # caricamento prompt: da Langfuse (con cache) con fallback ai file in repo
-  │   ├── harness/               # agent loop, tool registry, gestione contesto, pipeline steps
+  │   ├── llm-core/              # neutral types: Message, ContentBlock, ToolSpec, LlmRequest/Response, LlmClient trait
+  │   ├── llm-bedrock/           # LlmClient implementation over aws-sdk-bedrockruntime (Converse)
+  │   ├── observability/         # tracing + OpenTelemetry init, Langfuse exporter, attribute helpers, Langfuse API client
+  │   ├── prompts/               # prompt loading: from Langfuse (with cache) falling back to files in the repo
+  │   ├── harness/               # agent loop, tool registry, context management, pipeline steps
   │   ├── router/                # ModelRegistry, ModelRouter, fallback, circuit breaker
-  │   ├── evals/                 # runner di valutazione: dataset, grader, esperimenti su Langfuse, report
-  │   └── app/                   # binario: CLI (clap) e server HTTP (axum) con streaming SSE
-  ├── prompts/                   # snapshot dei prompt (fallback e diff in PR), uno per step
-  ├── datasets/                  # casi di test e golden set (JSONL), solo dati sintetici
+  │   ├── evals/                 # evaluation runner: datasets, graders, Langfuse experiments, reports
+  │   └── app/                   # binary: CLI (clap) and HTTP server (axum) with SSE streaming
+  ├── prompts/                   # prompt snapshots (fallback and PR diffs), one per step
+  ├── datasets/                  # test cases and golden sets (JSONL), synthetic data only
   ├── docs/adr/                  # Architecture Decision Records
   └── TUTORIAL.md
   ```
 
-- [ ] 2.3 Dipendenze di base nel workspace: `tokio` (full), `serde`, `serde_json`, `schemars` (genera JSON Schema dalle struct: lo userai per tool e structured output), `thiserror`, `anyhow`, `tracing`, `tracing-subscriber` (env-filter, json), `dotenvy`, `clap`, `async-trait`, `futures`. Le versioni le prendi da crates.io il giorno in cui installi: non fidarti di numeri letti in tutorial.
-- [ ] 2.4 Configura `.env` (mai committato) e `.env.example` (committato) con `AWS_PROFILE`, `AWS_REGION`, `BEDROCK_MODEL_FAST`, `BEDROCK_MODEL_MAIN`, e già i segnaposto `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` (li compili nel Modulo 5). Aggiungi `.env` a `.gitignore`.
-- [ ] 2.5 Lint e formato: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`. Un `justfile` con `just check`, `just test`, `just eval`, `just run`.
-- [ ] 2.6 CI su GitHub Actions: un workflow `ci.yml` che su ogni PR esegue fmt, clippy e `cargo nextest run` **senza credenziali** (i test che parlano con Bedrock o Langfuse saranno `#[ignore]`, Modulo 12). Un secondo workflow `nightly.yml`, vuoto per ora, che poi eseguirà contract test ed esperimenti.
-- [ ] 2.7 Scrivi `docs/adr/0001-struttura-workspace.md` usando il template dell'Appendice C. È il tuo primo ADR: breve, anche cinque righe.
-- [ ] 2.8 Primo commit (in inglese, imperativo: `Add workspace skeleton and CI`).
+- [ ] 2.3 Baseline workspace dependencies: `tokio` (full), `serde`, `serde_json`, `schemars` (generates JSON Schema from structs, which you will use for tools and structured output), `thiserror`, `anyhow`, `tracing`, `tracing-subscriber` (env-filter, json), `dotenvy`, `clap`, `async-trait`, `futures`. Take the versions from crates.io on the day you install: do not trust numbers read in a tutorial.
+- [ ] 2.4 Fill in `.env` from `.env.example` (`.env` is never committed) with `AWS_PROFILE`, `AWS_REGION`, `BEDROCK_MODEL_FAST`, `BEDROCK_MODEL_MAIN` and the Langfuse placeholders, which you complete in Module 5.
+- [ ] 2.5 Lints and formatting: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`. A `justfile` with `just check`, `just test`, `just eval`, `just run`.
+- [ ] 2.6 CI on GitHub Actions: a `ci.yml` workflow that on every pull request runs fmt, clippy and `cargo nextest run` **with no credentials** (the tests that talk to Bedrock or Langfuse will be `#[ignore]`, Module 12). A second workflow, `nightly.yml`, empty for now, which will later run contract tests and experiments.
+- [ ] 2.7 Write `docs/adr/0001-workspace-layout.md` from the template in `docs/adr/0000-template.md`. It is your first ADR: short is fine, five lines is fine.
+- [ ] 2.8 Commit (English, imperative: `Add workspace skeleton and CI`).
 
-**Fatto quando** `just check` e `just test` passano su un workspace vuoto, e la CI è verde.
+**Done when** `just check` and `just test` pass on an empty workspace and CI is green.
 
-**Autoverifica.** Perché `llm-core` non deve dipendere da `aws-sdk-*` né da `observability`? (Per poter mockare il provider nei test, aggiungere un secondo provider senza toccare l'harness, e cambiare backend di osservabilità senza toccare la logica.)
+**Self-check.** Why must `llm-core` not depend on `aws-sdk-*` or on `observability`? (So you can mock the provider in tests, add a second provider without touching the harness, and swap the observability backend without touching the logic.)
 
 ---
 
-## Modulo 3 · Attivare Amazon Bedrock
+## Module 3 · Enabling Amazon Bedrock
 
-⏱ 2–3 ore, di cui molta attesa su console AWS.
+⏱ 2–3 hours, much of it waiting on the AWS console.
 
-**Obiettivo.** Un account AWS con Bedrock attivo in EU, credenziali a privilegio minimo, modelli abilitati, budget sotto controllo e una prima chiamata riuscita dalla CLI.
+**Goal.** An AWS account with Bedrock enabled in the EU, least-privilege credentials, models enabled, a budget in place and a successful first call from the CLI.
 
-**Perché conta.** Bedrock ha un modello di accesso diverso da un provider "API key": IAM, regioni, abilitazione modelli, quote. Sbagliare qui produce errori criptici (`AccessDeniedException`, `ValidationException` su model id) che sembrano bug del codice.
+**Why it matters.** Bedrock's access model is different from an "API key" provider: IAM, regions, model enablement, quotas. Getting this wrong produces cryptic errors (`AccessDeniedException`, `ValidationException` on a model id) that look like bugs in your code.
 
-### Passi
+### Steps
 
-- [ ] 3.1 **Account.** Usa un account AWS **sandbox** dedicato (se l'azienda ha AWS Organizations, chiedine uno; altrimenti un account personale). MFA sull'utente root, root mai usato per lavorare.
-- [ ] 3.2 **Identità.** Preferisci IAM Identity Center (SSO) con un permission set; in alternativa un utente IAM con MFA e access key a rotazione. Per iniziare la policy gestita `AmazonBedrockFullAccess` va bene; **prima del Modulo 15** la sostituisci con una policy che concede solo `bedrock:InvokeModel` e `bedrock:InvokeModelWithResponseStream` (sono le azioni usate anche da Converse e ConverseStream) sugli ARN degli inference profile che usi davvero.
-- [ ] 3.3 **AWS CLI.** È già installata (v2.36). Configura un profilo: `aws configure sso` oppure `aws configure --profile bedrock-playground`. Verifica con `aws sts get-caller-identity --profile bedrock-playground`.
-- [ ] 3.4 **Regione.** Scegli `eu-west-1` (Irlanda) o `eu-central-1` (Francoforte) come regione "di casa". ⚠️ Milano (`eu-south-1`) ha un catalogo modelli più povero. 💡 Con la **cross-region inference** (inference profile con prefisso `eu.`) Bedrock instrada tra le regioni EU restando nell'area geografica: più capacità, dati che non lasciano l'UE. Il prefisso `global.` invece può uscire dall'UE: non usarlo in questo progetto.
-- [ ] 3.5 **Abilitazione modelli.** Console → Bedrock → *Model catalog*. Per i modelli **Anthropic** c'è un modulo *use case* da compilare una sola volta per account: l'accesso è immediato dopo l'invio. Abilita anche **Amazon Nova** (nessun modulo) e almeno un modello open-weight (Llama o Mistral) per il Modulo 11. L'abbonamento AWS Marketplace viene creato automaticamente alla prima invocazione se l'identità ha i permessi.
-- [ ] 3.6 **Trova gli ID giusti.** Gli ID cambiano: non copiarli dai tutorial, leggili dal tuo account.
+- [ ] 3.1 **Account.** Use a dedicated **sandbox** AWS account (if the company has AWS Organizations, ask for one; otherwise a personal account). MFA on the root user, and never work as root.
+- [ ] 3.2 **Identity.** Prefer IAM Identity Center (SSO) with a permission set; otherwise an IAM user with MFA and rotated access keys. To get going, the managed policy `AmazonBedrockFullAccess` is fine; **before Module 15** replace it with a policy granting only `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` (these are the actions Converse and ConverseStream use too) on the ARNs of the inference profiles you actually use.
+- [ ] 3.3 **AWS CLI.** Already installed (v2.36). Configure a profile: `aws configure sso` or `aws configure --profile bedrock-playground`. Verify with `aws sts get-caller-identity --profile bedrock-playground`.
+- [ ] 3.4 **Region.** Pick `eu-west-1` (Ireland) or `eu-central-1` (Frankfurt) as your home region. ⚠️ Milan (`eu-south-1`) has a thinner model catalogue. 💡 With **cross-region inference** (an inference profile prefixed `eu.`) Bedrock routes across EU regions while staying inside the geography: more capacity, and data that does not leave the EU. The `global.` prefix can leave the EU: do not use it in this project.
+- [ ] 3.5 **Enabling models.** Console → Bedrock → *Model catalog*. **Anthropic** models require a *use case* form, filled in once per account, with access granted immediately on submission. Also enable **Amazon Nova** (no form) and at least one open-weight model (Llama or Mistral) for Module 11. The AWS Marketplace subscription is created automatically on first invocation if the identity has the right permissions.
+- [ ] 3.6 **Find the right ids.** Ids change: do not copy them from tutorials, read them from your account.
 
   ```bash
   aws bedrock list-foundation-models --region eu-west-1 --by-provider anthropic --query 'modelSummaries[].modelId'
   aws bedrock list-inference-profiles --region eu-west-1 --query 'inferenceProfileSummaries[].inferenceProfileId'
   ```
 
-  Esempi di formato (da verificare): `eu.anthropic.claude-sonnet-5`, `eu.anthropic.claude-opus-5`, `eu.anthropic.claude-haiku-4-5-20251001-v1:0`. Segna in `.env` un modello **veloce ed economico** (`BEDROCK_MODEL_FAST`, tipicamente Haiku) e uno **principale** (`BEDROCK_MODEL_MAIN`, tipicamente Sonnet).
-- [ ] 3.7 **Quote.** Console → Service Quotas → Bedrock: cerca *requests per minute* e *tokens per minute* per i modelli scelti. Annotale: sono il tetto che il router (Modulo 10) dovrà rispettare. Richiedi un aumento solo se serve.
-- [ ] 3.8 **Budget.** AWS Budgets: un budget mensile (per esempio 30 €) con alert al 50% e all'80% via email. Attiva anche *Cost allocation tags* con un tag `project=agentic-playground`: lo userai per riconciliare i costi calcolati da Langfuse con la bolletta (Modulo 14).
-- [ ] 3.9 **Logging delle invocazioni.** Console → Bedrock → *Settings* → *Model invocation logging* verso CloudWatch Logs. Utile nei primissimi giorni di debugging; da quando avrai Langfuse (Modulo 5) diventa ridondante. ⚠️ I log contengono i prompt completi: in produzione con dati personali questa scelta va rivista (Modulo 13).
-- [ ] 3.10 🧪 **Prima chiamata dalla CLI.**
+  Example shapes, to be verified: `eu.anthropic.claude-sonnet-5`, `eu.anthropic.claude-opus-5`, `eu.anthropic.claude-haiku-4-5-20251001-v1:0`. Record a **fast and cheap** model in `.env` (`BEDROCK_MODEL_FAST`, typically Haiku) and a **main** one (`BEDROCK_MODEL_MAIN`, typically Sonnet).
+- [ ] 3.7 **Quotas.** Console → Service Quotas → Bedrock: look for *requests per minute* and *tokens per minute* for your chosen models. Write them down: they are the ceiling the router (Module 10) has to respect. Request an increase only if you need one.
+- [ ] 3.8 **Budget.** AWS Budgets: a monthly budget (say 30 €) with email alerts at 50% and 80%. Also turn on *Cost allocation tags* with a `project=agentic-playground` tag, which you will use to reconcile the costs Langfuse computes against the bill (Module 14).
+- [ ] 3.9 **Invocation logging.** Console → Bedrock → *Settings* → *Model invocation logging* to CloudWatch Logs. Useful in the first days of debugging; once you have Langfuse (Module 5) it becomes redundant. ⚠️ Those logs contain full prompts: in production with personal data this choice must be revisited (Module 13).
+- [ ] 3.10 🧪 **First call from the CLI.**
 
   ```bash
   aws bedrock-runtime converse \
     --region eu-west-1 --profile bedrock-playground \
     --model-id "$BEDROCK_MODEL_FAST" \
-    --messages '[{"role":"user","content":[{"text":"Rispondi con una sola parola: pronto?"}]}]' \
+    --messages '[{"role":"user","content":[{"text":"Answer with a single word: ready?"}]}]' \
     --inference-config '{"maxTokens":50}'
   ```
 
-  Guarda la risposta: `output.message.content`, `stopReason`, `usage.inputTokens`, `usage.outputTokens`, `metrics.latencyMs`. Annota nel Diario i token e la latenza: è la tua prima misura.
-- [ ] 3.11 📚 **Prezzi.** Leggi la pagina prezzi di Bedrock per i modelli scelti. Calcola a mano quanto costa la chiamata appena fatta. Impara la differenza tra token in ingresso, in uscita, **cache write** e **cache read** (le letture da cache costano circa il 10% dell'input normale). Questi prezzi li inserirai in Langfuse nel Modulo 5.
-- [ ] 3.12 💡 **Nota su "Claude Platform on AWS".** Dal 2026 Anthropic offre anche un accesso gestito direttamente da Anthropic dentro AWS (autenticazione SigV4, fatturazione Marketplace) con parità di funzionalità con l'API Anthropic e ID modello senza prefisso. È un'alternativa a Bedrock, non la stessa cosa: Bedrock è gestito da AWS, ha il proprio catalogo multi-vendor, Guardrails, Knowledge Bases, AgentCore. In questo tutorial restiamo su Bedrock perché l'obiettivo è imparare il provider; ne riparliamo nel Modulo 16.
+  Look at the response: `output.message.content`, `stopReason`, `usage.inputTokens`, `usage.outputTokens`, `metrics.latencyMs`. Record the tokens and the latency in the Work Log: that is your first measurement.
+- [ ] 3.11 📚 **Pricing.** Read the Bedrock pricing page for your chosen models. Work out by hand what the call you just made cost. Learn the difference between input tokens, output tokens, **cache writes** and **cache reads** (cache reads cost roughly 10% of normal input). You will enter these prices into Langfuse in Module 5.
+- [ ] 3.12 💡 **A note on "Claude Platform on AWS".** Since 2026 Anthropic also offers access operated directly by Anthropic inside AWS (SigV4 authentication, Marketplace billing) with feature parity with the Anthropic API and unprefixed model ids. It is an alternative to Bedrock, not the same thing: Bedrock is operated by AWS and has its own multi-vendor catalogue, Guardrails, Knowledge Bases and AgentCore. This tutorial stays on Bedrock because the point is to learn the provider; we come back to it in Module 16.
 
-**Fatto quando** la chiamata 3.10 risponde, il budget è attivo, e in `.env` hai due model id validi della regione EU.
+**Done when** the call in 3.10 answers, the budget is active, and `.env` holds two valid EU-region model ids.
 
-**Autoverifica.** Cosa succede se chiami un modello con un model id `us.*` da `eu-west-1`? E perché un inference profile `eu.*` è preferibile a un model id "nudo" senza prefisso?
+**Self-check.** What happens if you call a model with a `us.*` id from `eu-west-1`? And why is an `eu.*` inference profile preferable to a bare, unprefixed model id?
 
 ---
 
-## Modulo 4 · Prima chiamata a Bedrock da Rust
+## Module 4 · First Bedrock call from Rust
 
-⏱ 4–6 ore.
+⏱ 4–6 hours.
 
-**Obiettivo.** Una crate `llm-bedrock` che implementa il trait `LlmClient` definito in `llm-core`, con chiamata semplice, streaming, gestione errori e misura di token e latenza.
+**Goal.** An `llm-bedrock` crate implementing the `LlmClient` trait defined in `llm-core`, with a simple call, streaming, error handling, and token and latency measurement.
 
-**Perché conta.** Qui nasce il confine più importante dell'architettura: l'harness parlerà solo con `LlmClient`, mai con l'SDK.
+**Why it matters.** This is where the most important boundary in the architecture is born: the harness will only ever talk to `LlmClient`, never to the SDK.
 
-### Passi
+### Steps
 
-- [ ] 4.1 In `llm-core` definisci i tipi neutri. Non copiare i tipi dell'SDK: modella solo ciò che ti serve.
+- [ ] 4.1 Define the neutral types in `llm-core`. Do not copy the SDK's types: model only what you need.
 
   ```rust
   pub enum Role { User, Assistant }
@@ -207,7 +207,7 @@ Vedrai comparire in questa pipeline quasi tutti i temi del tutorial: prompt dive
   pub struct Message { pub role: Role, pub content: Vec<ContentBlock> }
   pub struct LlmRequest { pub model: ModelId, pub system: Vec<SystemBlock>, pub messages: Vec<Message>,
                           pub tools: Vec<ToolSpec>, pub max_tokens: u32, pub output_schema: Option<schemars::Schema>,
-                          pub extra: serde_json::Value /* campi specifici del modello, es. effort */ }
+                          pub extra: serde_json::Value /* model-specific fields, e.g. effort */ }
   pub struct LlmResponse { pub message: Message, pub stop_reason: StopReason, pub usage: Usage, pub latency: Duration }
   pub struct Usage { pub input_tokens: u32, pub output_tokens: u32, pub cache_read_tokens: u32, pub cache_write_tokens: u32 }
 
@@ -218,532 +218,533 @@ Vedrai comparire in questa pipeline quasi tutti i temi del tutorial: prompt dive
   }
   ```
 
-- [ ] 4.2 In `llm-bedrock` aggiungi `aws-config` (feature `behavior-version-latest`) e `aws-sdk-bedrockruntime`. Costruisci il client una volta sola (è costoso) e condividilo con `Arc`.
+- [ ] 4.2 In `llm-bedrock` add `aws-config` (feature `behavior-version-latest`) and `aws-sdk-bedrockruntime`. Build the client once, because it is expensive, and share it with `Arc`.
 
   ```rust
   let cfg = aws_config::defaults(BehaviorVersion::latest()).region(Region::new("eu-west-1")).load().await;
   let client = aws_sdk_bedrockruntime::Client::new(&cfg);
   ```
 
-- [ ] 4.3 Implementa `complete` con `client.converse()`: `model_id`, `system(SystemContentBlock::Text(..))`, `messages(..)`, `inference_config(InferenceConfiguration::builder().max_tokens(..))`. Mappa la risposta: `output()` → `ConverseOutput::Message`, `stop_reason()`, `usage()`, `metrics().latency_ms()`. 📚 Consulta docs.rs di `aws_sdk_bedrockruntime` per i nomi esatti: i builder dell'SDK cambiano tra versioni.
-- [ ] 4.4 **Errori.** Mappa le eccezioni del servizio in un `LlmError` con varianti che contano per il chiamante: `Throttled` (ritentabile), `ModelNotReady`/`ServiceUnavailable` (ritentabile), `ValidationError` (bug tuo, non ritentare), `AccessDenied` (config), `ContextTooLong`, `Other`. 💡 L'SDK ha già retry con backoff esponenziale e jitter: configuralo (`RetryConfig`) invece di riscriverlo; il router (Modulo 10) aggiungerà solo il fallback tra modelli.
-- [ ] 4.5 **Streaming.** Implementa `stream` con `converse_stream()`: ricevi `ConverseStreamOutput` con eventi `MessageStart`, `ContentBlockStart`, `ContentBlockDelta` (testo o pezzi di JSON del tool), `ContentBlockStop`, `MessageStop`, `Metadata` (usage). Traducili in un tuo `LlmEvent`. ⚠️ Gli argomenti dei tool arrivano a pezzi come stringa JSON: accumula e fai il parse solo a `ContentBlockStop`.
-- [ ] 4.6 **Parametri specifici del modello.** Converse è neutro; ciò che è specifico di un vendor passa in `additional_model_request_fields` (un `Document`). Per Claude ci passano, ad esempio, `thinking` e `output_config.effort`. Fai in modo che `LlmRequest.extra` finisca lì.
-- [ ] 4.7 **Prompt caching.** Converse supporta il blocco `cachePoint`: marca la fine del prefisso stabile (system prompt, definizioni tool). Aggiungi `ContentBlock::CachePoint` e verifica che `usage.cache_read_tokens` diventi maggiore di zero alla seconda chiamata identica. Se resta zero, qualcosa nel prefisso cambia a ogni chiamata (timestamp, ordine dei campi).
-- [ ] 4.8 🧪 Un binario `app hello` che fa una chiamata e stampa: risposta, stop reason, token, latenza, costo stimato (una tabella prezzi hardcoded per ora). Ripeti 5 volte la stessa chiamata: annota la varianza di latenza e la presenza della cache.
-- [ ] 4.9 🧪 Streaming da CLI: stampa i token man mano che arrivano. Misura il **time-to-first-token** e il tempo totale. Confrontali con la chiamata non-streaming.
-- [ ] 4.10 Aggiungi `tracing`: uno `span` per chiamata con campi `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `latency_ms`, `stop_reason`. Nel Modulo 5 questi span diventeranno *generation* in Langfuse senza toccare `llm-bedrock`.
-- [ ] 4.11 Un secondo `LlmClient` finto, `FakeLlmClient`, in `llm-core` (dietro feature `test-util`): risponde con risposte preconfigurate. Ti serve dal Modulo 7 in poi per testare l'harness senza rete.
+- [ ] 4.3 Implement `complete` with `client.converse()`: `model_id`, `system(SystemContentBlock::Text(..))`, `messages(..)`, `inference_config(InferenceConfiguration::builder().max_tokens(..))`. Map the response: `output()` → `ConverseOutput::Message`, `stop_reason()`, `usage()`, `metrics().latency_ms()`. 📚 Check docs.rs for `aws_sdk_bedrockruntime` for the exact names: the SDK's builders change between versions.
+- [ ] 4.4 **Errors.** Map the service exceptions to an `LlmError` whose variants matter to the caller: `Throttled` (retryable), `ModelNotReady`/`ServiceUnavailable` (retryable), `ValidationError` (your bug, do not retry), `AccessDenied` (configuration), `ContextTooLong`, `Other`. 💡 The SDK already retries with exponential backoff and jitter: configure it (`RetryConfig`) instead of rewriting it; the router (Module 10) will only add cross-model fallback.
+- [ ] 4.5 **Streaming.** Implement `stream` with `converse_stream()`: you receive `ConverseStreamOutput` with `MessageStart`, `ContentBlockStart`, `ContentBlockDelta` (text or fragments of the tool's JSON), `ContentBlockStop`, `MessageStop` and `Metadata` (usage) events. Translate them into your own `LlmEvent`. ⚠️ Tool arguments arrive as a JSON string in pieces: accumulate them and parse only at `ContentBlockStop`.
+- [ ] 4.6 **Model-specific parameters.** Converse is neutral; anything vendor-specific goes in `additional_model_request_fields` (a `Document`). For Claude, `thinking` and `output_config.effort` travel there, among others. Wire `LlmRequest.extra` into that field.
+- [ ] 4.7 **Prompt caching.** Converse supports a `cachePoint` block: it marks the end of the stable prefix (system prompt, tool definitions). Add `ContentBlock::CachePoint` and verify that `usage.cache_read_tokens` becomes greater than zero on the second identical call. If it stays at zero, something in the prefix changes on every call (a timestamp, field ordering).
+- [ ] 4.8 🧪 An `app hello` binary that makes a call and prints the reply, stop reason, tokens, latency and estimated cost (a hardcoded price table for now). Repeat the same call five times: record the latency variance and whether the cache is being read.
+- [ ] 4.9 🧪 Streaming from the CLI: print tokens as they arrive. Measure **time to first token** and total time. Compare them with the non-streaming call.
+- [ ] 4.10 Add `tracing`: one span per call with `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `latency_ms` and `stop_reason` fields. In Module 5 these spans become Langfuse *generations* without touching `llm-bedrock`.
+- [ ] 4.11 A second, fake `LlmClient` called `FakeLlmClient`, in `llm-core` behind a `test-util` feature: it returns preconfigured responses. You need it from Module 7 onwards to test the harness without a network.
 
-**Fatto quando** `app hello` e `app hello --stream` funzionano, gli errori di throttling e di validazione sono distinguibili nei log, e `cache_read_tokens > 0` alla seconda chiamata.
+**Done when** `app hello` and `app hello --stream` work, throttling and validation errors are distinguishable in the logs, and `cache_read_tokens > 0` on the second call.
 
-**Autoverifica.** Perché il parse degli argomenti di un tool in streaming va fatto solo alla fine del blocco? Quali errori sono ritentabili e quali no?
+**Self-check.** Why must tool arguments be parsed only at the end of the block when streaming? Which errors are retryable and which are not?
 
-**Approfondimenti.** Esempi ufficiali Bedrock Runtime per Rust nella *AWS SDK for Rust Developer Guide*; API reference `Converse` e `ConverseStream`.
-
----
-
-## Modulo 5 · Attivare Langfuse e vedere le chiamate
-
-⏱ 4–6 ore.
-
-**Obiettivo.** Un progetto Langfuse attivo (Cloud regione UE, oppure self-hosted in locale), l'app Rust che esporta ogni chiamata come *generation* con token, costo, modello e latenza, e tu che sai leggere una trace.
-
-**Perché conta.** Da qui in avanti ogni esperimento del tutorial si legge in Langfuse, non nei log. Vedere le chiamate mentre impari accorcia il ciclo di apprendimento più di qualsiasi lettura. Ed è lo strumento che vuoi padroneggiare.
-
-### Passi
-
-- [ ] 5.1 📚 🔭 **Il modello dati.** Leggi *Observability Data Model* nella documentazione Langfuse. Da fissare: **trace** (una richiesta end-to-end; ha `input`, `output`, `user_id`, `session_id`, `tags`, `metadata`, `release`, `version`, `environment`), **observation** (span, generation, event, e i tipi agentici agent/tool/chain/retriever/evaluator; annidabili), **generation** (una chiamata al modello: modello, parametri, usage, costo, prompt collegato), **score** (numerico, categorico o booleano; su trace, observation o sessione), **session** (più trace di una stessa conversazione), **dataset** e **dataset run** (li vedrai nel Modulo 11).
-- [ ] 5.2 🔭 **Scegli dove gira Langfuse.** Due strade, entrambe valide per imparare:
-  - **Langfuse Cloud, regione UE** (`https://cloud.langfuse.com`, dati in Irlanda `eu-west-1`, la stessa area del tuo Bedrock). Zero infrastruttura, piano gratuito sufficiente per il tutorial.
-  - **Self-hosted in locale** con Docker Compose: componenti `web`, `worker`, PostgreSQL, ClickHouse, Redis/Valkey, S3/MinIO. Utile per capire l'architettura (ingestione asincrona via coda, analitiche su ClickHouse) e per il Modulo 15, dove valuterai il self-hosting su AWS.
-  Consiglio: parti dal Cloud UE, e fai il self-host locale come esperimento del Modulo 15. Scrivi la scelta in un ADR con la motivazione "residenza dei dati".
-- [ ] 5.3 🔭 Crea organizzazione e **progetto** (`agentic-playground`). Genera una coppia di **API key** (public + secret) e mettile in `.env`. In Langfuse le chiavi sono per progetto: ambienti diversi (local, dev, prod) possono essere progetti diversi **oppure** lo stesso progetto con l'attributo `environment` sulle trace. Per il tutorial usa un progetto e `environment`.
-- [ ] 5.4 🔭 **Modelli e prezzi.** Langfuse calcola il costo da `usage` solo se conosce il modello. In *Settings → Models* aggiungi le definizioni per i tuoi model id Bedrock (match per regex sul nome, per esempio `(?i)^eu\.anthropic\.claude-haiku-4-5.*`) con prezzi per token di input, output, cache read e cache write presi da 3.11. Senza questo passo vedrai i token ma non il costo.
-- [ ] 5.5 💡 **Come si arriva a Langfuse da Rust.** Langfuse non ha un SDK ufficiale Rust; ha due porte aperte a qualunque linguaggio: l'**endpoint OpenTelemetry** (`/api/public/otel`, protocollo OTLP su HTTP, autenticazione Basic con `public:secret`) e l'**API pubblica REST**. Per il tracing userai OTel; per prompt, dataset, score ed esperimenti userai l'API. Crate utili: `opentelemetry-langfuse` (un builder per l'exporter OTLP già configurato per Langfuse), `langfuse-ergonomic` (client dell'API pubblica con builder; sopra a `langfuse-client-base`, generato dall'OpenAPI).
-- [ ] 5.6 Nella crate `observability` inizializza lo stack: `tracing` → `tracing-opentelemetry` → `opentelemetry_sdk` con exporter OTLP verso Langfuse (`opentelemetry-otlp` con `endpoint = {LANGFUSE_HOST}/api/public/otel` e header `Authorization: Basic base64(public:secret)`, oppure il builder di `opentelemetry-langfuse`). Tieni anche il layer `fmt` su stdout per lo sviluppo. Batch exporter, flush esplicito allo shutdown (altrimenti perdi le ultime trace nei binari CLI).
-- [ ] 5.7 🔭 **Mappare gli span sul modello dati.** Langfuse legge sia le convenzioni GenAI di OpenTelemetry sia i propri attributi `langfuse.*`. Regole minime:
-  - Lo span **radice** diventa la trace: mettici `langfuse.session.id`, `langfuse.user.id` (già pseudonimizzato), `langfuse.trace.tags`, `langfuse.environment`, `langfuse.release` (versione dell'app), `langfuse.trace.input` e `langfuse.trace.output`.
-  - Lo span di una chiamata LLM diventa una generation con `langfuse.observation.type = "generation"`, `gen_ai.request.model` (o `langfuse.observation.model.name`), `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, e i dettagli di cache in `langfuse.observation.usage_details` (JSON con `input`, `output`, `cache_read_input_tokens`, `cache_creation_input_tokens`); `langfuse.observation.input` e `.output` per i contenuti (vedi 5.10 per la privacy).
-  - Gli span dei tool: `langfuse.observation.type = "tool"`; gli step della pipeline: `"span"` o `"chain"`.
-  📚 Verifica i nomi esatti nella pagina *OpenTelemetry* della documentazione Langfuse: la lista degli attributi si evolve.
-- [ ] 5.8 Scrivi un helper in `observability` che l'harness usa senza conoscere Langfuse: `record_generation(span, &LlmRequest, &LlmResponse)` che imposta gli attributi di 5.7 dai tuoi tipi neutri. Collegalo allo span di 4.10.
-- [ ] 5.9 🧪 Esegui `app hello` tre volte. In Langfuse apri *Tracing → Traces*: devi vedere tre trace, ognuna con una generation, con modello, token, **costo** e latenza. Apri una generation: leggi input, output, usage. Se il costo manca, torna a 5.4. Se la trace manca, controlla flush e credenziali.
-- [ ] 5.10 💡 🔭 **Contenuti e privacy, prima regola.** Decidi **ora** una politica per `input`/`output`: in `local` e `dev` completi; in `prod` passano da una funzione di redazione (Modulo 13) e da un campionamento. Implementala come configurazione di `observability`, non come `if` sparsi. Langfuse offre anche il mascheramento lato ingestione e la retention per progetto: annota entrambe le opzioni per il Modulo 13.
-- [ ] 5.11 🧪 Simula una conversazione da CLI (`app chat` con tre messaggi): ogni messaggio è una trace, tutte con lo stesso `session.id`. In Langfuse apri *Sessions*: devi vedere la conversazione intera in ordine. Poi *Users*: devi vedere l'utente sintetico con costo cumulato.
-- [ ] 5.12 🧪 Aggiungi il tuo primo **score** via API (`langfuse-ergonomic` o `POST /api/public/scores`): dopo `app hello`, attacca alla trace uno score booleano `smoke_ok = true`. Serve a capire il meccanismo che userai per guardrail (Modulo 9), feedback utente ed eval (Moduli 11 e 14).
-- [ ] 5.13 🔭 Fai un giro completo dell'interfaccia e annota nel Diario a cosa serve ogni sezione: Tracing (Traces, Sessions, Users, Observations), Prompts, Evaluation (Datasets, Evaluators, Scores, Annotation Queues), Dashboards, Settings (Models, API keys, Members, Retention). È la mappa dei prossimi moduli.
-
-**Fatto quando** ogni chiamata dell'app appare in Langfuse come generation con costo; le conversazioni sono raggruppate in sessioni; uno score arriva via API; la politica sui contenuti è in configurazione.
-
-**Autoverifica.** Perché gli attributi di trace (`session.id`, `user.id`, `tags`) vanno messi sullo span radice e non solo su una generation? Che differenza c'è tra un progetto Langfuse per ambiente e un solo progetto con `environment`?
-
-**Approfondimenti.** Pagina *OpenTelemetry* e *Observability Data Model* di Langfuse; README delle crate `opentelemetry-langfuse` e `langfuse-ergonomic`; *Self-hosting* per l'architettura v3.
+**Going deeper.** The official Bedrock Runtime examples for Rust in the *AWS SDK for Rust Developer Guide*; the `Converse` and `ConverseStream` API reference.
 
 ---
 
-## Modulo 6 · Prompt engineering sistematico con Langfuse Prompt Management
+## Module 5 · Enabling Langfuse and seeing the calls
 
-⏱ 8–10 ore, distribuite su più giorni.
+⏱ 4–6 hours.
 
-**Obiettivo.** Un metodo ripetibile per scrivere, misurare e versionare i prompt, con Langfuse come registro dei prompt e i file in repo come fallback, applicato al prompt `SAFETY` del progetto guida.
+**Goal.** A live Langfuse project (EU cloud region, or self-hosted locally), the Rust app exporting every call as a *generation* with tokens, cost, model and latency, and you being able to read a trace.
 
-**Perché conta.** "Il miglior prompt possibile" non esiste in astratto: esiste il miglior compromesso tra qualità, costo e latenza **per un task, un modello e un dataset misurato**. Senza misura si gira in tondo. E senza un registro con versioni non sai mai quale prompt ha prodotto quale risposta.
+**Why it matters.** From here on, every experiment in this tutorial is read in Langfuse, not in the logs. Seeing the calls while you learn shortens the feedback loop more than any amount of reading. And it is the tool you want to master.
 
-### Passi
+### Steps
 
-- [ ] 6.1 📚 Leggi la guida di prompt engineering della documentazione Claude (sezione *Prompt engineering* su platform.claude.com) e le note di prompting per i modelli Claude 5: i prompt scritti per modelli vecchi tendono a essere troppo prescrittivi e peggiorano l'output dei modelli recenti.
-- [ ] 6.2 💡 **Anatomia di un system prompt.** In ordine: (1) ruolo e contesto operativo, (2) obiettivo del task, (3) regole e vincoli (positivi: "fai X" funziona meglio di "non fare Y"), (4) formato di output, (5) esempi (few-shot) solo se servono, (6) dati variabili **alla fine**. I tag XML (`<contesto>`, `<regole>`, `<esempi>`) aiutano il modello a separare le parti e sono il modo standard per delimitare l'input dell'utente dal resto.
-- [ ] 6.3 📚 🔭 **Prompt Management in Langfuse.** Leggi *Prompt Management Concepts*. Da fissare: un prompt ha un **nome**, **versioni** immutabili (1, 2, 3…), **label** che puntano a una versione (`production` è quella servita di default; `staging`, `latest` e label custom), tipo **text** o **chat**, **variabili** con sintassi `{{nome}}`, `config` (un JSON libero: ci metti modello, effort, `max_tokens`), tag, e la possibilità di comporre prompt dentro prompt. Le label `production` possono essere **protette** (solo certi ruoli le spostano).
-- [ ] 6.4 🔭 Crea in Langfuse il prompt `safety-classifier` (tipo chat: un messaggio system con le regole e uno user con `{{message}}`), con `config = { "model_role": "fast", "effort": "low", "max_tokens": 200 }`. Assegna la label `production` alla v1.
-- [ ] 6.5 🔭 Nella crate `prompts` implementa `PromptStore::get(name, label)`:
-  1. chiama `GET /api/public/v2/prompts/{name}?label=production` (via `langfuse-ergonomic`),
-  2. **cache in memoria** con TTL (60 secondi è il default degli SDK ufficiali; in produzione 5–10 minuti vanno bene),
-  3. **fallback** al file `prompts/<name>.md` in repo se Langfuse non risponde (è il pattern "guaranteed availability" della documentazione),
-  4. restituisce un oggetto con `name`, `version`, `template`, `config` e un metodo `render(vars)`.
-  Un job `just prompts-pull` scarica in `prompts/` gli snapshot delle versioni `production`: così ogni cambiamento di prompt compare anche nel diff di una PR, e il fallback è sempre aggiornato.
-- [ ] 6.6 🔭 **Collega prompt e generation.** Quando l'harness fa una chiamata usando un prompt, imposta sullo span della generation `langfuse.observation.prompt.name` e `langfuse.observation.prompt.version`. In Langfuse, aprendo il prompt, vedrai tutte le generation che lo hanno usato, con costo e latenza medie **per versione**: è la base di ogni confronto.
-- [ ] 6.7 💡 **Stabilità del prefisso.** Ciò che non cambia tra chiamate (istruzioni, schema, esempi) va prima; ciò che cambia (profilo utente, contesto recuperato, messaggio) va dopo il `cachePoint`. Ogni byte che cambia nel prefisso azzera la cache. Con le variabili Langfuse questo si traduce in: variabili solo nella parte finale del template.
-- [ ] 6.8 💡 **Structured output.** Definisci lo schema di output come struct Rust con `serde` + `schemars`, genera il JSON Schema e passalo in `outputConfig.textFormat` (Converse, tipo `json_schema`). In alternativa, forza un tool con quello schema. ⚠️ Non tutti i modelli supportano entrambe le strade, e Claude Fable 5.1 non accetta la forzatura del tool: fai un test per modello e registra il risultato nella `ModelRegistry` (Modulo 10). Lo schema vive nel codice, non nel prompt: nel prompt Langfuse metti solo il riferimento al nome dello schema.
-- [ ] 6.9 💡 **Thinking ed effort.** Sui modelli Claude recenti il ragionamento è adattivo; regoli la profondità con `effort` (`low`, `medium`, `high`, `xhigh`, `max`). Per una classificazione (`SAFETY`) `low` è quasi sempre sufficiente; per la generazione principale prova `medium` e `high` e misura. 💡 Prima di passare a un modello più grande, prova il modello attuale con effort più alto: spesso costa meno. Il valore va nel `config` del prompt, così è versionato insieme al testo.
-- [ ] 6.10 🧪 **Laboratorio: il prompt `SAFETY` in italiano.** Costruisci `datasets/safety/v1.jsonl` con **30–50 messaggi sintetici** etichettati a mano (`SAFE`, `PSYCH_CRISIS`, `MEDICAL_EMERGENCY`), includendo casi ambigui tipici dell'italiano ("non ce la faccio più", "sono stanca di tutto", "mi scoppia la testa"). Misura accuratezza, falsi negativi (il caso peggiore qui), latenza e costo su `BEDROCK_MODEL_FAST`. Per ora il runner è uno script semplice; nel Modulo 11 diventa un esperimento Langfuse.
-- [ ] 6.11 🧪 🔭 Itera **in Langfuse**: v2 con esempi, v3 con regole più esplicite sul contesto, v4 con `effort` diverso nel `config`. Una variabile alla volta. Usa il **Playground** di Langfuse per provare rapidamente una variante su 3–4 casi prima di lanciare il dataset intero (collega il playground a Bedrock nelle impostazioni di *LLM connections*, se disponibile per il tuo modello; altrimenti prova dal tuo runner). Registra ogni run con la scheda dell'Appendice D. Sposta la label `production` solo sulla versione vincente.
-- [ ] 6.12 🧪 Ripeti 6.10 con `BEDROCK_MODEL_MAIN`. Il modello grande batte il piccolo? Di quanto, a quale costo e latenza? Questa è la prima decisione da ADR: "per `SAFETY` usiamo X perché…".
-- [ ] 6.13 💡 **Anti-pattern da riconoscere.** Prompt lunghissimi che "coprono tutti i casi"; regole in maiuscolo e minacce; chiedere JSON senza schema; mettere i dati dell'utente in mezzo alle istruzioni; cambiare prompt e modello insieme; giudicare un prompt su tre esempi; spostare `production` senza un dataset che lo giustifichi.
-- [ ] 6.14 💡 **Prompt injection, prima nozione.** Tutto ciò che viene dall'utente o da un documento recuperato è **dato**, non istruzione. Delimitalo, e nel system prompt dichiara che il contenuto dentro certi tag va trattato come testo da analizzare. Approfondimento nel Modulo 13.
+- [ ] 5.1 📚 🔭 **The data model.** Read *Observability Data Model* in the Langfuse docs. Fix these in your mind: **trace** (one end-to-end request, with `input`, `output`, `user_id`, `session_id`, `tags`, `metadata`, `release`, `version`, `environment`), **observation** (span, generation, event, plus the agentic types agent/tool/chain/retriever/evaluator; nestable), **generation** (one model call: model, parameters, usage, cost, linked prompt), **score** (numeric, categorical or boolean; on a trace, an observation or a session), **session** (several traces from the same conversation), **dataset** and **dataset run** (you meet these in Module 11).
+- [ ] 5.2 🔭 **Decide where Langfuse runs.** Two routes, both fine for learning:
+  - **Langfuse Cloud, EU region** (`https://cloud.langfuse.com`, data in Ireland `eu-west-1`, the same geography as your Bedrock). Zero infrastructure, and the free tier is enough for this tutorial.
+  - **Self-hosted locally** with Docker Compose: `web` and `worker` components, PostgreSQL, ClickHouse, Redis/Valkey, S3/MinIO. Useful for understanding the architecture (asynchronous queue-based ingestion, analytics on ClickHouse) and for Module 15, where you evaluate self-hosting on AWS.
+  Recommendation: start on EU Cloud and do the local self-host as a Module 15 experiment. Write the choice in an ADR with "data residency" as the rationale.
+- [ ] 5.3 🔭 Create an organization and a **project** (`agentic-playground`). Generate an **API key** pair (public and secret) and put them in `.env`. Langfuse keys are per project: different environments (local, dev, prod) can be different projects **or** the same project with an `environment` attribute on traces. For this tutorial use one project plus `environment`.
+- [ ] 5.4 🔭 **Models and prices.** Langfuse computes cost from `usage` only if it knows the model. Under *Settings → Models*, add definitions for your Bedrock model ids (matched by a regex on the name, for example `(?i)^eu\.anthropic\.claude-haiku-4-5.*`) with per-token prices for input, output, cache read and cache write, taken from 3.11. Without this step you will see tokens but no cost.
+- [ ] 5.5 💡 **How you reach Langfuse from Rust.** Langfuse has no official Rust SDK; it has two doors open to any language: the **OpenTelemetry endpoint** (`/api/public/otel`, OTLP over HTTP, Basic authentication with `public:secret`) and the **public REST API**. Use OTel for tracing and the API for prompts, datasets, scores and experiments. Useful crates: `opentelemetry-langfuse` (a builder for an OTLP exporter preconfigured for Langfuse) and `langfuse-ergonomic` (a public-API client with builders, on top of the OpenAPI-generated `langfuse-client-base`).
+- [ ] 5.6 In the `observability` crate, initialize the stack: `tracing` → `tracing-opentelemetry` → `opentelemetry_sdk` with an OTLP exporter pointing at Langfuse (`opentelemetry-otlp` with `endpoint = {LANGFUSE_HOST}/api/public/otel` and an `Authorization: Basic base64(public:secret)` header, or the builder from `opentelemetry-langfuse`). Keep the `fmt` layer on stdout for development. Use the batch exporter, and flush explicitly on shutdown, or CLI binaries will lose their last traces.
+- [ ] 5.7 🔭 **Mapping spans onto the data model.** Langfuse reads both the OpenTelemetry GenAI conventions and its own `langfuse.*` attributes. The minimum rules:
+  - The **root** span becomes the trace: put `langfuse.session.id`, `langfuse.user.id` (already pseudonymized), `langfuse.trace.tags`, `langfuse.environment`, `langfuse.release` (the app version), `langfuse.trace.input` and `langfuse.trace.output` on it.
+  - The span of an LLM call becomes a generation, with `langfuse.observation.type = "generation"`, `gen_ai.request.model` (or `langfuse.observation.model.name`), `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, and the cache details in `langfuse.observation.usage_details` (a JSON object with `input`, `output`, `cache_read_input_tokens`, `cache_creation_input_tokens`); `langfuse.observation.input` and `.output` carry the content (see 5.10 for privacy).
+  - Tool spans: `langfuse.observation.type = "tool"`. Pipeline steps: `"span"` or `"chain"`.
+  📚 Check the exact names in the *OpenTelemetry* page of the Langfuse docs: the attribute list evolves.
+- [ ] 5.8 Write a helper in `observability` that the harness uses without knowing anything about Langfuse: `record_generation(span, &LlmRequest, &LlmResponse)`, which sets the 5.7 attributes from your neutral types. Wire it to the span from 4.10.
+- [ ] 5.9 🧪 Run `app hello` three times. In Langfuse open *Tracing → Traces*: you should see three traces, each with one generation, showing model, tokens, **cost** and latency. Open a generation and read its input, output and usage. If cost is missing, go back to 5.4. If the trace is missing, check the flush and the credentials.
+- [ ] 5.10 💡 🔭 **Content and privacy, first rule.** Decide **now** on a policy for `input`/`output`: full content in `local` and `dev`; in `prod` they pass through a redaction function (Module 13) and through sampling. Implement it as configuration in `observability`, not as scattered `if`s. Langfuse also offers masking at ingestion and per-project retention: note both options for Module 13.
+- [ ] 5.11 🧪 Simulate a conversation from the CLI (`app chat` with three messages): each message is a trace, all sharing the same `session.id`. Open *Sessions* in Langfuse: you should see the whole conversation in order. Then *Users*: you should see the synthetic user with cumulative cost.
+- [ ] 5.12 🧪 Add your first **score** through the API (`langfuse-ergonomic` or `POST /api/public/scores`): after `app hello`, attach a boolean `smoke_ok = true` score to the trace. This teaches you the mechanism you will use for guardrails (Module 9), user feedback and evaluation (Modules 11 and 14).
+- [ ] 5.13 🔭 Take a full tour of the interface and note in the Work Log what each section is for: Tracing (Traces, Sessions, Users, Observations), Prompts, Evaluation (Datasets, Evaluators, Scores, Annotation Queues), Dashboards, Settings (Models, API keys, Members, Retention). It is the map of the next modules.
 
-**Fatto quando** il prompt `SAFETY` vive in Langfuse con almeno tre versioni misurate sullo stesso dataset, l'app lo carica con cache e fallback, ogni generation in Langfuse mostra nome e versione del prompt usato, e un ADR dice quale versione e quale modello usi, con i numeri.
+**Done when** every call from the app appears in Langfuse as a generation with a cost, conversations are grouped into sessions, a score arrives through the API, and the content policy lives in configuration.
 
-**Autoverifica.** Cosa succede all'app se Langfuse è irraggiungibile per un'ora? (Deve continuare a funzionare con i prompt in cache o dai file: se non è così, il fallback non è implementato.) Perché un few-shot di cinque esempi può peggiorare un classificatore?
+**Self-check.** Why do trace attributes (`session.id`, `user.id`, `tags`) belong on the root span and not only on a generation? What is the difference between one Langfuse project per environment and a single project with an `environment` attribute?
+
+**Going deeper.** The *OpenTelemetry* and *Observability Data Model* pages in the Langfuse docs; the READMEs of the `opentelemetry-langfuse` and `langfuse-ergonomic` crates; *Self-hosting* for the v3 architecture.
 
 ---
 
-## Modulo 7 · Tool calling e primo agent loop
+## Module 6 · Systematic prompt engineering with Langfuse Prompt Management
 
-⏱ 6–8 ore.
+⏱ 8–10 hours, spread over several days.
 
-**Obiettivo.** Un harness generico in `harness`: registro di tool, loop di esecuzione, limiti di sicurezza, test con `FakeLlmClient`, trace annidate in Langfuse. Più un collegamento a un server MCP.
+**Goal.** A repeatable method for writing, measuring and versioning prompts, with Langfuse as the prompt registry and repository files as the fallback, applied to the guiding project's `SAFETY` prompt.
 
-**Perché conta.** Questo è il pezzo che di solito un framework nasconde. Scriverlo a mano una volta ti fa capire cosa ti regala (e cosa ti toglie) un framework.
+**Why it matters.** "The best possible prompt" does not exist in the abstract: what exists is the best trade-off between quality, cost and latency **for one task, one model and one measured dataset**. Without measurement you go in circles. And without a versioned registry you never know which prompt produced which answer.
 
-### Passi
+### Steps
 
-- [ ] 7.1 💡 Definisci un `Tool` come trait: `name()`, `description()`, `input_schema()` (generato da `schemars` a partire da una struct di input), `async fn call(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError>`. Un `ToolRegistry` li tiene per nome.
-- [ ] 7.2 Traduci i `ToolSpec` in `ToolConfiguration` di Converse (nome, descrizione, `inputSchema.json`). In streaming e non.
-- [ ] 7.3 💡 **Il loop.** Pseudocodice:
+- [ ] 6.1 📚 Read the prompt engineering guide in the Claude documentation (the *Prompt engineering* section on platform.claude.com) and the prompting notes for Claude 5 models: prompts written for older models tend to be over-prescriptive and degrade output on recent ones.
+- [ ] 6.2 💡 **Anatomy of a system prompt.** In order: (1) role and operating context, (2) the task's goal, (3) rules and constraints (positive: "do X" works better than "do not do Y"), (4) output format, (5) examples (few-shot) only if they earn their place, (6) variable data **last**. XML tags (`<context>`, `<rules>`, `<examples>`) help the model separate the parts and are the standard way to delimit user input from everything else.
+- [ ] 6.3 📚 🔭 **Prompt Management in Langfuse.** Read *Prompt Management Concepts*. Fix these: a prompt has a **name**, immutable **versions** (1, 2, 3…), **labels** pointing at a version (`production` is what is served by default; `staging`, `latest` and custom labels), a **text** or **chat** type, **variables** with `{{name}}` syntax, a `config` (free-form JSON: put the model, effort and `max_tokens` there), tags, and the ability to compose prompts inside prompts. `production` labels can be **protected** so only certain roles move them.
+- [ ] 6.4 🔭 Create the `safety-classifier` prompt in Langfuse (chat type: a system message with the rules and a user message with `{{message}}`), with `config = { "model_role": "fast", "effort": "low", "max_tokens": 200 }`. Assign the `production` label to v1.
+- [ ] 6.5 🔭 In the `prompts` crate implement `PromptStore::get(name, label)`:
+  1. call `GET /api/public/v2/prompts/{name}?label=production` (through `langfuse-ergonomic`),
+  2. **cache in memory** with a TTL (60 seconds is the official SDKs' default; 5–10 minutes is fine in production),
+  3. **fall back** to the `prompts/<name>.md` file in the repository when Langfuse does not answer (this is the "guaranteed availability" pattern from the docs),
+  4. return an object with `name`, `version`, `template`, `config` and a `render(vars)` method.
+  A `just prompts-pull` job downloads snapshots of the `production` versions into `prompts/`, so every prompt change also shows up in a pull request diff and the fallback stays current.
+- [ ] 6.6 🔭 **Link prompts and generations.** When the harness makes a call using a prompt, set `langfuse.observation.prompt.name` and `langfuse.observation.prompt.version` on the generation's span. Opening the prompt in Langfuse then shows every generation that used it, with average cost and latency **per version**: this is the basis of every comparison.
+- [ ] 6.7 💡 **Prefix stability.** What does not change between calls (instructions, schema, examples) goes first; what does change (user profile, retrieved context, the message) goes after the `cachePoint`. Every byte that changes in the prefix invalidates the cache. With Langfuse variables this translates to: variables only in the final part of the template.
+- [ ] 6.8 💡 **Structured output.** Define the output schema as a Rust struct with `serde` and `schemars`, generate the JSON Schema and pass it in `outputConfig.textFormat` (Converse, `json_schema` type). Alternatively, force a tool with that schema. ⚠️ Not every model supports both routes, and Claude Fable 5.1 does not accept forced tool choice: test this per model and record the result in the `ModelRegistry` (Module 10). The schema lives in the code, not in the prompt: the Langfuse prompt only references the schema by name.
+- [ ] 6.9 💡 **Thinking and effort.** On recent Claude models reasoning is adaptive; you tune the depth with `effort` (`low`, `medium`, `high`, `xhigh`, `max`). For a classification task (`SAFETY`) `low` is almost always enough; for the main generation try `medium` and `high` and measure. 💡 Before moving to a bigger model, try the current model at higher effort: it is often cheaper. The value belongs in the prompt's `config`, so it is versioned together with the text.
+- [ ] 6.10 🧪 **Lab: the `SAFETY` prompt in Italian.** Build `datasets/safety/v1.jsonl` with **30–50 synthetic messages** labelled by hand (`SAFE`, `PSYCH_CRISIS`, `MEDICAL_EMERGENCY`), including the ambiguous cases typical of Italian ("non ce la faccio più", "sono stanca di tutto", "mi scoppia la testa"). Measure accuracy, false negatives (the worst case here), latency and cost on `BEDROCK_MODEL_FAST`. For now the runner is a simple script; in Module 11 it becomes a Langfuse experiment.
+- [ ] 6.11 🧪 🔭 Iterate **in Langfuse**: v2 with examples, v3 with more explicit rules about context, v4 with a different `effort` in the `config`. One variable at a time. Use the Langfuse **Playground** to try a variant on three or four cases quickly before running the whole dataset (connect the playground to Bedrock under *LLM connections* if it is available for your model; otherwise run it from your own runner). Record every run with the card in Appendix D. Move the `production` label only onto the winning version.
+- [ ] 6.12 🧪 Repeat 6.10 with `BEDROCK_MODEL_MAIN`. Does the big model beat the small one? By how much, at what cost and latency? This is your first ADR-worthy decision: "for `SAFETY` we use X because…".
+- [ ] 6.13 💡 **Anti-patterns to recognize.** Enormous prompts that "cover every case"; rules in capitals and threats; asking for JSON without a schema; putting user data in the middle of the instructions; changing prompt and model together; judging a prompt on three examples; moving `production` without a dataset to justify it.
+- [ ] 6.14 💡 **Prompt injection, first notion.** Anything coming from a user or a retrieved document is **data**, not instructions. Delimit it, and state in the system prompt that content inside certain tags is text to be analyzed. More in Module 13.
+
+**Done when** the `SAFETY` prompt lives in Langfuse with at least three versions measured on the same dataset, the app loads it with caching and a fallback, every generation in Langfuse shows the prompt name and version, and an ADR records which version and which model you use, with the numbers.
+
+**Self-check.** What happens to the app if Langfuse is unreachable for an hour? (It must keep working from cached prompts or from the files: if not, the fallback is not implemented.) Why can a five-example few-shot make a classifier worse?
+
+---
+
+## Module 7 · Tool calling and the first agent loop
+
+⏱ 6–8 hours.
+
+**Goal.** A generic harness in `harness`: a tool registry, an execution loop, safety limits, tests with `FakeLlmClient`, and nested traces in Langfuse. Plus a connection to an MCP server.
+
+**Why it matters.** This is the piece a framework usually hides. Writing it by hand once shows you what a framework gives you, and what it takes away.
+
+### Steps
+
+- [ ] 7.1 💡 Define `Tool` as a trait: `name()`, `description()`, `input_schema()` (generated by `schemars` from an input struct), `async fn call(&self, input: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError>`. A `ToolRegistry` holds them by name.
+- [ ] 7.2 Translate your `ToolSpec` values into Converse's `ToolConfiguration` (name, description, `inputSchema.json`), both streaming and not.
+- [ ] 7.3 💡 **The loop.** In pseudocode:
 
   ```text
   messages = [user]
-  loop (max N iterazioni, budget di token e di tempo):
+  loop (max N iterations, plus token and time budgets):
       resp = llm.complete(system, messages, tools)
       messages.push(resp.message)
       if resp.stop_reason != ToolUse: break
-      results = esegui in parallelo tutti i ToolUse presenti nel messaggio
-      messages.push(user message con TUTTI i ToolResult, nello stesso ordine)
+      results = run every ToolUse in the message, in parallel
+      messages.push(a user message with ALL the ToolResults, in the same order)
   ```
 
-  ⚠️ Tutti i `tool_result` di un turno vanno in **un solo** messaggio user; dividerli insegna al modello a non fare chiamate parallele. Un tool che fallisce restituisce un `tool_result` con `is_error = true`, mai un'eccezione che rompe il loop.
-- [ ] 7.4 **Limiti.** Iterazioni massime, timeout complessivo, budget di token, lista di tool "pericolosi" che richiedono conferma umana (human-in-the-loop): il loop si sospende e restituisce uno stato `AwaitingApproval` che il chiamante può riprendere. Nel progetto guida non c'è ancora un tool pericoloso, ma il meccanismo serve.
-- [ ] 7.5 📚 **Disegnare buoni tool.** Leggi *Writing effective tools for agents*. Regole pratiche: pochi tool con confini netti; nomi e descrizioni scritti per il modello (dicono *quando* usarli e *quando no*); input piccoli e tipizzati; output compatti (il risultato finisce nel contesto e si paga a ogni turno successivo); errori descrittivi che dicono al modello come correggersi.
-- [ ] 7.6 🔭 **Trace annidate.** Lo span dell'agente (`langfuse.observation.type = "agent"`) contiene una generation per iterazione e uno span `"tool"` per ogni esecuzione di tool, con input e output. In Langfuse la trace deve leggersi come un albero: iterazione 1 → tool A, tool B → iterazione 2 → risposta finale. Aggiungi ai metadata della trace `iterations` e `tool_calls`.
-- [ ] 7.7 🧪 Tool di esempio per il progetto guida: `search_knowledge_base(query, top_k)` (per ora su una lista in memoria con ricerca testuale; diventerà vettoriale nel Modulo 8), `get_user_profile(user_id)`, `get_current_date()`. Fai una demo in cui il modello decide da solo quando cercare, e leggila in Langfuse.
-- [ ] 7.8 **Test senza rete.** Con `FakeLlmClient` scrivi test che verificano: il loop si ferma a `EndTurn`; un tool inesistente produce `is_error`; il tetto di iterazioni scatta; due `tool_use` nello stesso messaggio vengono eseguiti in parallelo e restituiti in un solo messaggio.
-- [ ] 7.9 💡 **Model Context Protocol (MCP).** È lo standard per esporre tool a un modello attraverso un server separato. Con la crate ufficiale `rmcp` scrivi un **client** che si collega a un server MCP (per esempio un server filesystem di esempio, o uno tuo che espone la knowledge base) e adatta i suoi tool al tuo `Tool` trait. Così l'harness non distingue tool locali e remoti.
-- [ ] 7.10 🧪 Misura in Langfuse quanti token costa il *solo* elenco dei tool nel prompt (confronta una generation con e senza tool). Se hai molti tool, questo costo si paga a ogni turno: è il motivo per cui esistono tecniche di caricamento su richiesta (Modulo 16).
-- [ ] 7.11 💡 **Structured output via tool.** Implementa l'alternativa a 6.8: un tool `emit_result` con lo schema voluto. Confronta affidabilità e latenza con `outputConfig.textFormat`. Registra il risultato per modello.
+  ⚠️ Every `tool_result` from one turn goes in a **single** user message; splitting them teaches the model to stop making parallel calls. A failing tool returns a `tool_result` with `is_error = true`, never an exception that breaks the loop.
+- [ ] 7.4 **Limits.** Maximum iterations, an overall timeout, a token budget, and a list of "dangerous" tools requiring human approval: the loop suspends and returns an `AwaitingApproval` state the caller can resume. The guiding project has no dangerous tool yet, but the mechanism is needed.
+- [ ] 7.5 📚 **Designing good tools.** Read *Writing effective tools for agents*. Practical rules: few tools with sharp boundaries; names and descriptions written for the model (they say *when* to use it and *when not*); small, typed inputs; compact outputs (the result lands in the context and is paid for on every later turn); descriptive errors that tell the model how to correct itself.
+- [ ] 7.6 🔭 **Nested traces.** The agent's span (`langfuse.observation.type = "agent"`) contains one generation per iteration and one `"tool"` span per tool execution, with input and output. In Langfuse the trace should read as a tree: iteration 1 → tool A, tool B → iteration 2 → final answer. Add `iterations` and `tool_calls` to the trace metadata.
+- [ ] 7.7 🧪 Example tools for the guiding project: `search_knowledge_base(query, top_k)` (for now over an in-memory list with text search; it becomes vector search in Module 8), `get_user_profile(user_id)`, `get_current_date()`. Build a demo where the model decides on its own when to search, and read it in Langfuse.
+- [ ] 7.8 **Tests without a network.** With `FakeLlmClient`, write tests verifying that: the loop stops at `EndTurn`; a nonexistent tool produces `is_error`; the iteration ceiling fires; two `tool_use` blocks in one message are executed in parallel and returned in a single message.
+- [ ] 7.9 💡 **Model Context Protocol (MCP).** This is the standard for exposing tools to a model through a separate server. With the official `rmcp` crate, write a **client** that connects to an MCP server (for example a sample filesystem server, or one of your own exposing the knowledge base) and adapts its tools to your `Tool` trait. The harness then cannot tell local tools from remote ones.
+- [ ] 7.10 🧪 Measure in Langfuse how many tokens the tool list alone costs (compare a generation with and without tools). With many tools that cost is paid on every turn, which is why on-demand loading techniques exist (Module 16).
+- [ ] 7.11 💡 **Structured output through a tool.** Implement the alternative from 6.8: an `emit_result` tool with the schema you want. Compare reliability and latency against `outputConfig.textFormat`. Record the result per model.
 
-**Fatto quando** il loop generico è testato senza rete, un tool MCP remoto è utilizzabile come uno locale, la trace in Langfuse mostra l'albero agente → generation → tool, e hai una demo in cui il modello cerca nella KB quando serve.
+**Done when** the generic loop is tested without a network, a remote MCP tool is usable exactly like a local one, the Langfuse trace shows the agent → generation → tool tree, and you have a demo where the model searches the knowledge base when it needs to.
 
-**Autoverifica.** Cosa succede se un tool restituisce 50 KB di testo? (Il contesto esplode, il costo cresce a ogni turno, la qualità cala.) Quali sono tre modi per evitarlo?
-
----
-
-## Modulo 8 · Gestione del contesto (context engineering)
-
-⏱ 8–10 ore.
-
-**Obiettivo.** Decidere in modo esplicito **cosa** entra nel contesto di ogni chiamata, **in che ordine** e **con quale budget**: memoria breve, memoria lunga, retrieval, cache. E renderlo visibile in Langfuse.
-
-**Perché conta.** Il contesto è una risorsa finita con rendimenti decrescenti. La qualità di un'applicazione agentica dipende più da cosa tieni fuori che da cosa metti dentro.
-
-### Passi
-
-- [ ] 8.1 📚 Leggi *Effective context engineering for AI agents*. Concetti da annotare: context rot, "la più piccola quantità di token ad alto segnale", just-in-time retrieval, compattazione, note strutturate, sub-agenti come strumento di isolamento del contesto.
-- [ ] 8.2 💡 **Contare i token.** Bedrock espone l'operazione `CountTokens` (verifica la disponibilità per il tuo modello nella tua regione); in alternativa usa `usage.inputTokens` delle chiamate reali per calibrare una stima locale (caratteri / 3,5 per l'italiano). Registra sempre la stima **e** il valore reale: la differenza ti dice quanto puoi fidarti dell'euristica.
-- [ ] 8.3 💡 **Budget esplicito.** Definisci per la chiamata `GENERATION` un budget, per esempio: system stabile ≤ 2.500 token, profilo compatto ≤ 400, contesto KB ≤ 1.500, turni recenti ≤ 3.000, messaggio corrente. Mettilo in configurazione, non nel codice. 🔭 Scrivi la ripartizione effettiva per sezione nei `metadata` della generation: in Langfuse potrai vedere dove finiscono i token quando il costo sale.
-- [ ] 8.4 🧪 **Memoria breve: finestra a budget di token.** Implementa `conversation_log` append-only in SQLite e `recent_turns` **derivato** dal log: leggi i turni all'indietro accumulando i token finché il budget regge. Misura in token, non in numero di turni (chi scrive messaggi corti non va penalizzato). Test unitari con turni finti.
-- [ ] 8.5 🧪 **Compattazione.** Quando la conversazione supera il budget, riassumi i turni più vecchi con una chiamata al modello economico e sostituiscili con un blocco `<riassunto_precedente>`. Definisci cosa il riassunto deve preservare (decisioni prese, argomenti aperti, tono) e verifica con un test che le informazioni chiave sopravvivano. 🔭 La compattazione è una generation a sé, con il suo prompt versionato in Langfuse (`conversation-summarizer`).
-- [ ] 8.6 🧪 **Memoria lunga: il profilo utente.** Struct `UserProfile` con dimensioni, `confidence` e `last_updated`. La vista **compatta** iniettata in `GENERATION` filtra per confidenza e recenza (regola d'esempio dal documento ispiratore: confidenza > 0,5 e aggiornato negli ultimi 90 giorni, oppure confidenza > 0,8 sempre). L'aggiornamento (`PROFILE_UPDATE`) è asincrono, con structured output, e **atomico**: o sostituisce tutto il profilo o non tocca nulla.
-- [ ] 8.7 💡 **Retrieval (RAG) essenziale.** Tre pezzi: embedding (su Bedrock: Amazon Titan Embeddings o Cohere Embed, tramite `invoke_model`), un vector store (in locale `pgvector` su PostgreSQL, oppure LanceDB/Qdrant), una funzione di ricerca con `top_k` e filtri per metadati. Il chunking dei documenti conta più del modello di embedding: chunk piccoli e con metadati (fonte, data di revisione, autore). 🔭 Il retrieval è uno span di tipo `retriever` con `query`, `top_k`, id e punteggi dei record trovati.
-- [ ] 8.8 🧪 Sostituisci la KB in memoria del Modulo 7 con quella vettoriale. Usa 20–30 record sintetici. Misura *recall@3* su 15 query scritte a mano. Poi prova la variante gestita **Bedrock Knowledge Bases** per capire cosa ti toglie di lavoro e cosa ti toglie di controllo.
-- [ ] 8.9 💡 **Ordine e cache.** Ricomponi il prompt di `GENERATION` così: [system stabile + schema + regole] → `cachePoint` → [profilo compatto] → [contesto KB] → [turni recenti] → [messaggio]. Verifica `cache_read_tokens` nelle chiamate consecutive dello stesso utente: in Langfuse compare nei dettagli di usage della generation e, se hai configurato il prezzo di cache read in 5.4, nel costo.
-- [ ] 8.10 💡 **Pulizia del contesto agentico.** Nei loop con molti tool, i risultati vecchi diventano zavorra: sostituisci i `tool_result` più vecchi con un placeholder ("risultato rimosso, 1.240 token") dopo K turni. Misura l'effetto su costo e qualità.
-- [ ] 8.11 Scrivi `docs/adr/000x-context-budget.md`: budget per sezione, regole della vista compatta, strategia di compattazione, motivazioni.
-
-**Fatto quando** la finestra a budget, la compattazione e il profilo compatto sono testati senza rete, la KB vettoriale funziona, la cache viene letta nelle chiamate consecutive e i metadata delle generation in Langfuse mostrano la ripartizione dei token.
-
-**Autoverifica.** Perché `recent_turns` deve essere derivato dal log e non scritto a parte? (Una sola fonte di verità, nessuna incoerenza da doppia scrittura.)
+**Self-check.** What happens if a tool returns 50 KB of text? (The context explodes, cost grows on every turn, quality drops.) What are three ways to avoid it?
 
 ---
 
-## Modulo 9 · La pipeline del progetto guida
+## Module 8 · Context engineering
 
-⏱ 10–14 ore.
+⏱ 8–10 hours.
 
-**Obiettivo.** Comporre i pezzi in una pipeline end-to-end funzionante da CLI e da HTTP, con una trace Langfuse per messaggio, e con streaming e guardrail in parallelo come **estensione** separata.
+**Goal.** Decide explicitly **what** enters the context of each call, **in what order** and **with what budget**: short-term memory, long-term memory, retrieval, cache. And make it visible in Langfuse.
 
-**Perché conta.** È il momento in cui i concetti diventano un sistema: concorrenza, cancellazione, retry, atomicità, e le domande di design che nessun tutorial sui prompt ti fa.
+**Why it matters.** Context is a finite resource with diminishing returns. The quality of an agentic application depends more on what you keep out than on what you put in.
 
-### Passi
+### Steps
 
-- [ ] 9.1 💡 Modella la pipeline come **workflow esplicito**, non come agente libero: un `enum Stage` e una funzione per step, ognuna con input e output tipizzati. Il codice decide il flusso; l'LLM lavora dentro gli step. È il pattern giusto quando il flusso è noto in anticipo, e rende ogni step testabile da solo.
-- [ ] 9.2 Implementa `STATE_READ` → `SAFETY` (con `RETRIEVAL` in parallelo via `tokio::join!`, il suo risultato si scarta se `SAFETY` blocca) → `GENERATION` → `GUARDRAILS` → `STATE_WRITE` → risposta → `PROFILE_UPDATE` in background (`tokio::spawn`, con tracing collegato allo span della richiesta).
-- [ ] 9.3 🔭 **Una trace per messaggio.** Span radice = trace con `session.id` = conversazione, `user.id` pseudonimizzato, `tags = ["pipeline", ambiente]`, `input` = messaggio utente, `output` = risposta finale. Uno span figlio per step, con il nome dello step; le chiamate LLM sono generation dentro lo step. `PROFILE_UPDATE` gira dopo la risposta: fallo come span figlio ritardato **oppure** come trace separata con `metadata.parent_trace_id`; scegli e documenta. Ogni prompt usato porta nome e versione (6.6).
-- [ ] 9.4 💡 **Escalation.** Le risposte di escalation di `SAFETY` sono **testi fissi** decisi da persone, non generati: nel dominio sanitario è una scelta di sicurezza e di responsabilità. Mettili in configurazione. 🔭 Tagga la trace `escalation:<tipo>`.
-- [ ] 9.5 💡 🔭 **Loop evaluator-optimizer.** Se `GUARDRAILS` fallisce, rilancia `GENERATION` con il motivo del fallimento nel prompt; al massimo 2 tentativi, poi risposta di fallback sicura. Registra l'esito come **score** sulla trace (`guardrail_pass` booleano, `guardrail_failure_type` categorico) e il numero di tentativi nei metadata: la frequenza dei fallimenti diventa un grafico e un alert nel Modulo 14.
-- [ ] 9.6 💡 **Robustezza.** Timeout per step; retry con backoff e jitter solo su errori ritentabili; idempotenza degli scritti (una richiesta ripetuta non duplica turni); `PROFILE_UPDATE` atomico con rollback; cancellazione pulita se il client chiude la connessione (`CancellationToken`). Gli errori diventano span con `level = ERROR` e `status_message`, così in Langfuse li filtri.
-- [ ] 9.7 Esponi la pipeline via HTTP con `axum`: `POST /chat` (risposta completa) e `POST /chat/stream` (SSE). Autenticazione finta per ora (header con `user_id`). Restituisci nel corpo della risposta il `trace_id`: servirà per collegare il feedback dell'utente (Modulo 14).
-- [ ] 9.8 🧪 Misura in Langfuse la latenza per step su 20 messaggi sintetici: `SAFETY`, `GENERATION` (time-to-first-token e totale), `GUARDRAILS`. Confronta con le stime del documento ispiratore. Annota costo per messaggio (Langfuse lo somma per trace).
-- [ ] 9.9 🧪 **Estensione: streaming con guardrail in parallelo.** Inoltra i token di `GENERATION` al client man mano, mentre `GUARDRAILS` analizza il testo accumulato (a chunk, o a fine stream). Se fallisce, invii un evento `retract` e la risposta corretta. ⚠️ È un epic a sé: buffering, abort pulito, UX del "testo che sparisce". Fallo solo dopo che la versione sincrona è stabile e misurata, e documenta il compromesso in un ADR.
-- [ ] 9.10 💡 **Alternativa agentica.** Riscrivi (in un branch) `GENERATION` come agente con tool (`search_knowledge_base`, `get_user_profile`) invece che con contesto pre-iniettato. Confronta in Langfuse qualità, costo, latenza e prevedibilità. Questo confronto è la lezione centrale di "workflow vs agente".
-- [ ] 9.11 ADR: struttura della pipeline, scelte di concorrenza, politica di retry, scelta workflow vs agente, forma della trace.
+- [ ] 8.1 📚 Read *Effective context engineering for AI agents*. Concepts to note: context rot, "the smallest set of high-signal tokens", just-in-time retrieval, compaction, structured notes, sub-agents as a tool for context isolation.
+- [ ] 8.2 💡 **Counting tokens.** Bedrock exposes a `CountTokens` operation (check availability for your model in your region); otherwise use `usage.inputTokens` from real calls to calibrate a local estimate (characters / 3.5 for Italian). Always record both the estimate **and** the real value: the gap tells you how much to trust the heuristic.
+- [ ] 8.3 💡 **An explicit budget.** Define a budget for the `GENERATION` call, for example: stable system ≤ 2,500 tokens, compact profile ≤ 400, knowledge base context ≤ 1,500, recent turns ≤ 3,000, plus the current message. Put it in configuration, not in the code. 🔭 Write the actual per-section split into the generation's `metadata`: in Langfuse you can then see where the tokens go when cost rises.
+- [ ] 8.4 🧪 **Short-term memory: a token-budgeted window.** Implement an append-only `conversation_log` in SQLite and derive `recent_turns` **from** the log: read turns backwards, accumulating tokens until the budget runs out. Measure in tokens, not in number of turns, so that people who write short messages are not penalized. Unit tests with fake turns.
+- [ ] 8.5 🧪 **Compaction.** When the conversation exceeds the budget, summarize the older turns with a call to the cheap model and replace them with a `<previous_summary>` block. Define what the summary must preserve (decisions made, open topics, tone) and verify with a test that the key information survives. 🔭 Compaction is a generation in its own right, with its own versioned Langfuse prompt (`conversation-summarizer`).
+- [ ] 8.6 🧪 **Long-term memory: the user profile.** A `UserProfile` struct with dimensions, `confidence` and `last_updated`. The **compact** view injected into `GENERATION` filters by confidence and recency (example rule from the source document: confidence > 0.5 and updated within the last 90 days, or confidence > 0.8 always). The update (`PROFILE_UPDATE`) is asynchronous, uses structured output, and is **atomic**: it either replaces the whole profile or touches nothing.
+- [ ] 8.7 💡 **Retrieval (RAG), the essentials.** Three pieces: embeddings (on Bedrock: Amazon Titan Embeddings or Cohere Embed, through `invoke_model`), a vector store (locally `pgvector` on PostgreSQL, or LanceDB/Qdrant), and a search function with `top_k` and metadata filters. Document chunking matters more than the embedding model: small chunks with metadata (source, review date, author). 🔭 Retrieval is a `retriever` span with `query`, `top_k`, and the ids and scores of the records found.
+- [ ] 8.8 🧪 Replace the in-memory knowledge base from Module 7 with the vector one. Use 20–30 synthetic records. Measure *recall@3* over 15 hand-written queries. Then try the managed alternative, **Bedrock Knowledge Bases**, to see what work it removes and what control it takes away.
+- [ ] 8.9 💡 **Order and cache.** Recompose the `GENERATION` prompt like this: [stable system + schema + rules] → `cachePoint` → [compact profile] → [knowledge base context] → [recent turns] → [message]. Verify `cache_read_tokens` across consecutive calls from the same user: in Langfuse it appears in the generation's usage details and, if you configured the cache read price in 5.4, in the cost.
+- [ ] 8.10 💡 **Cleaning up agentic context.** In loops with many tools, old results become ballast: replace the oldest `tool_result` values with a placeholder ("result removed, 1,240 tokens") after K turns. Measure the effect on cost and quality.
+- [ ] 8.11 Write `docs/adr/000x-context-budget.md`: budget per section, compact view rules, compaction strategy, rationale.
 
-**Fatto quando** `POST /chat` risponde end-to-end con dati sintetici, ogni messaggio produce in Langfuse una trace con uno span per step e gli score dei guardrail, il profilo si aggiorna in background senza corrompersi in caso di errore, e hai una tabella di latenza e costo per step.
+**Done when** the budgeted window, compaction and the compact profile are tested without a network, the vector knowledge base works, the cache is read on consecutive calls, and generation metadata in Langfuse shows the token split.
 
-**Autoverifica.** Perché `RETRIEVAL` può partire in parallelo a `SAFETY` ma `GENERATION` no? Cosa rende un aggiornamento "atomico" nel tuo codice?
-
----
-
-## Modulo 10 · Router di modelli
-
-⏱ 8–10 ore.
-
-**Obiettivo.** Una crate `router` che sceglie il modello per ogni chiamata secondo regole esplicite, gestisce fallback e degradazione, ed espone le decisioni in Langfuse.
-
-**Perché conta.** Ogni step ha esigenze diverse (una classificazione non ha bisogno del modello più grande). Il router è dove costo, latenza, qualità e disponibilità si incontrano. Fatto male, nasconde i problemi; fatto bene, è la leva di ottimizzazione più economica.
-
-### Passi
-
-- [ ] 10.1 💡 **ModelRegistry.** Una tabella di `ModelSpec` caricata da configurazione (TOML): `id`, `provider`, `tier` (small/mid/large), prezzo input/output/cache per Mtok, context window, `supports_tools`, `supports_structured_output`, `supports_streaming`, `region_profile`, quota (rpm, tpm), latenza p50 misurata. Le capacità le **verifichi con test** (Modulo 12), non le copi dalla documentazione. I prezzi devono coincidere con quelli inseriti in Langfuse (5.4): tienili in un solo file e generane entrambi.
-- [ ] 10.2 💡 **Strategie di routing**, da implementare in ordine crescente di complessità:
-  1. **Statica per step**: `SAFETY → small`, `GENERATION → mid/large`, `GUARDRAILS → small`, `PROFILE_UPDATE → small`. Copre il 90% dei casi reali. Il `config` del prompt in Langfuse (6.4) dice il **ruolo** (`fast`, `main`), il router traduce il ruolo in modello: così cambiare modello non richiede toccare il prompt e viceversa.
-  2. **A regole**: per lunghezza input, lingua, presenza di tool, richiesta di structured output, utente premium.
-  3. **A cascata**: prova il modello economico; se la confidenza dichiarata è bassa o l'output non valida lo schema, passa al modello superiore. Misura quanto spesso scala.
-  4. **Con classificatore**: un piccolo modello (o una regola) stima la difficoltà e sceglie il tier. Attenzione al costo della chiamata in più.
-  5. **Gestita**: *Amazon Bedrock Intelligent Prompt Routing* sceglie tra modelli di una famiglia in base al prompt. Provala per capire cosa fa, e confrontala con la tua strategia 3.
-- [ ] 10.3 💡 **Fallback e resilienza.** Per ogni ruolo una catena: primario → secondario (stesso tier, altro modello o altra regione EU) → degradazione (risposta di cortesia, coda). Retry solo su errori ritentabili, con backoff e jitter (l'SDK lo fa per la singola chiamata; il router lo fa **tra modelli**). Circuit breaker per modello: dopo N errori in T secondi, salta al secondario per un periodo, poi riprova gradualmente.
-- [ ] 10.4 💡 **Vincoli da rispettare.** Timeout residuo della richiesta (non ha senso fare fallback se restano 200 ms); quote per modello (un token bucket locale con `governor` evita di andare in throttling); regione (mai uscire da EU); capacità (non instradare una richiesta con tool a un modello che non li supporta).
-- [ ] 10.5 ⚠️ **La cache è per modello.** Cambiare modello a metà conversazione azzera il prompt cache e può cambiare stile e comportamento. Il router deve preferire la **stabilità per sessione**: fissa il modello all'inizio della conversazione e cambialo solo per errori, non per ottimizzazione istantanea.
-- [ ] 10.6 🔭 **Il router in Langfuse.** Ogni generation porta nei metadata `router.role`, `router.reason` (`static`, `fallback:throttled`, `escalation:low_confidence`), `router.attempt`; il modello effettivo è già nel campo modello. In Langfuse crea un **dashboard** con: distribuzione delle generation per modello, costo per ruolo, conteggio dei fallback (filtro sui metadata). Vedrai subito se un modello economico "scala" troppo spesso.
-- [ ] 10.7 💡 **Sperimentazione controllata.** Supporta un `override` per richiesta (header o config) per forzare un modello: serve per gli esperimenti del Modulo 11. Aggiungi *shadow routing*: la richiesta va al modello A, e un campione (per esempio il 5%) va **anche** a B in background solo per confronto, senza toccare la risposta all'utente; la generation "ombra" ha il tag `shadow`.
-- [ ] 10.8 🧪 Simula guasti con `FakeLlmClient` (throttling a raffica, timeout, output non valido) e verifica: fallback corretto, circuit breaker che apre e richiude, nessuna richiesta oltre la quota configurata.
-- [ ] 10.9 🧪 Con modelli reali: confronta la strategia statica con la cascata su 50 messaggi sintetici. Costo totale, latenza p50/p95, qualità (Modulo 11). Scrivi l'ADR con la scelta.
-
-**Fatto quando** il router è configurato da file, testato sui guasti senza rete, e ogni decisione è leggibile in Langfuse con la sua motivazione.
-
-**Autoverifica.** Perché "il modello più economico che passa i test" non è la regola giusta per `GENERATION` se il costo per **task completato** (non per chiamata) è più alto per via di retry e rigenerazioni?
-
-**Approfondimenti.** Pagina *Intelligent Prompt Routing* di Bedrock; il pattern "orchestrator-workers" per delegare sotto-task a modelli piccoli senza cambiare modello nel loop principale.
+**Self-check.** Why must `recent_turns` be derived from the log rather than written separately? (One source of truth, no dual-write inconsistency.)
 
 ---
 
-## Modulo 11 · Valutare i modelli con dataset ed esperimenti
+## Module 9 · The guiding project's pipeline
 
-⏱ 10–12 ore.
+⏱ 10–14 hours.
 
-**Obiettivo.** Un runner in `evals` che esegue un **dataset Langfuse** con una configurazione (modello, prompt@versione, effort), registra i risultati come **dataset run** con score, e produce un report confrontabile: qualità con intervallo di confidenza, costo, latenza. Più i giudici LLM gestiti da Langfuse e la calibrazione con annotazioni umane.
+**Goal.** Compose the pieces into a working end-to-end pipeline, available from the CLI and over HTTP, with one Langfuse trace per message, and with streaming plus parallel guardrails as a separate **extension**.
 
-**Perché conta.** Senza eval decidi a sensazione. Con un eval **rotto** decidi con sicurezza nella direzione sbagliata. La maggior parte dei "risultati sorprendenti" sono bug dell'eval.
+**Why it matters.** This is where the concepts become a system: concurrency, cancellation, retries, atomicity, and the design questions no prompting tutorial asks you.
 
-### Passi
+### Steps
 
-- [ ] 11.1 📚 🔭 Leggi *LLM Evaluation Concepts* e *Evaluation Overview* di Langfuse. Da fissare: **dataset** (collezione di item con `input`, `expected_output`, `metadata`), **dataset run** (un esperimento: ogni item eseguito produce una trace collegata all'item, più score), **evaluator** (un giudice LLM o una funzione che assegna score a trace di produzione o di esperimento), **annotation queue** (coda per far etichettare a una persona), **score** con tre tipi (numerico, categorico, booleano).
-- [ ] 11.2 💡 **Cosa valuti, per step.** `SAFETY`: accuratezza, e soprattutto **falsi negativi** (un rischio non visto). `GENERATION`: aderenza allo schema, uso corretto dei riferimenti KB (niente affermazioni non presenti nei record citati), tono, qualità dell'italiano, assenza di diagnosi. `GUARDRAILS`: accordo con giudizio umano. `PROFILE_UPDATE`: correttezza dell'estrazione. Ogni step ha il suo dataset.
-- [ ] 11.3 🔭 **Dataset.** Sorgente di verità: i file JSONL in `datasets/` (versionati in git). Un comando `just datasets-push` li carica in Langfuse come dataset (`safety-v1`, `generation-v1`…) via API. Da dove vengono i casi: scritti a mano, sintetizzati con un modello **e poi rivisti da una persona**, o (in produzione) da trace reali aggiunte al dataset con un clic dall'interfaccia Langfuse. ⚠️ Mai usare come "verità" l'output del modello che stai valutando. Bilancia le classi. Per `SAFETY` inserisci esplicitamente casi in entrambe le direzioni (deve scattare / non deve scattare).
-- [ ] 11.4 💡 **Tipi di grader.** (1) Programmatico: exact match, validazione schema, regex, controllo che gli ID KB citati esistano. (2) Rubrica con LLM-judge: proprietà **atomiche** valutate una per una (`no_diagnosis`, `grounded_in_kb`, `tone_ok`), output strutturato, con testo candidato trattato come dato e non come istruzione. (3) Pairwise: due risposte, quale è migliore (randomizza l'ordine A/B). Usa un giudice di **famiglia diversa** dal modello valutato quando possibile.
-- [ ] 11.5 🔭 **Il runner come dataset run.** `just eval --dataset safety-v1 --model X --prompt safety-classifier@v3 --reps 3` fa: crea un run con nome parlante (`safety-v1 / haiku / v3 / 2026-09-20`), per ogni item e ripetizione esegue la pipeline reale dello step (non una copia), collega la trace all'item del dataset, calcola i grader programmatici e li scrive come score sul run. Metadata del run: modello, prompt@versione, effort, commit git.
-- [ ] 11.6 🔭 **Giudici gestiti da Langfuse.** In *Evaluation → Evaluators* crea un evaluator LLM-as-a-judge per `no_diagnosis` e uno per `grounded_in_kb`, con la tua rubrica, collegato a Bedrock, filtrato sulle trace degli esperimenti. Langfuse li esegue da solo su ogni nuova trace che matcha. Confronta con l'alternativa "giudice nel runner": il primo è comodo e riusabile in produzione (Modulo 14), il secondo è testabile e versionato in git. Puoi tenerli entrambi.
-- [ ] 11.7 🔭 **Calibrare il giudice.** Manda 30–50 trace in un'**annotation queue**, etichettale tu (o un collega clinico) con gli stessi score del giudice, poi confronta accordo giudice/umano. Sotto il 90% su casi chiari, la rubrica va rifatta. Ripeti quando cambi modello giudice.
-- [ ] 11.8 💡 **Metriche di performance dall'API, non stimate.** Token in/out/cache dalla risposta; costo calcolato dal listino del modello **che ha risposto davvero**; latenza della sola chiamata riuscita (senza i retry). Il costo del giudice è visibile a parte in Langfuse perché le sue generation sono trace distinte.
-- [ ] 11.9 💡 **Ripetizioni e rumore.** Esegui ogni caso R volte (almeno 2–3). La metà larghezza dell'intervallo di confidenza su un tasso di successo è circa `1/sqrt(n·R)`: 30 casi × 2 ripetizioni ≈ ±13 punti. Se la differenza tra due run è sotto il rumore, **non c'è differenza**. Il runner stampa questo numero nel report; Langfuse mostra le medie per run, non gli intervalli: calcolali tu.
-- [ ] 11.10 💡 **Igiene dell'harness di eval.** Distingui errori di infrastruttura (timeout, throttling, output troncato a `max_tokens`) da errori del modello: i primi diventano score `infra_error = true` e non entrano nella media di qualità. La traiettoria completa è già in Langfuse (trace collegata all'item). Verifica che il modello che ha risposto sia quello richiesto. Esegui un **oracolo** (le risposte attese devono passare) e un **baseline nullo** (risposta vuota deve fallire): se non succede, l'eval è rotto.
-- [ ] 11.11 🧪 🔭 **Confronto modelli per `SAFETY`.** Tre run (Haiku, Sonnet, un non-Anthropic) sullo stesso dataset e prompt. In Langfuse usa la vista di **confronto tra run** del dataset: score medi, costo, latenza fianco a fianco. Poi apri i casi in cui i run discordano: sono i più istruttivi. Decisione nell'ADR.
-- [ ] 11.12 🧪 **Confronto per `GENERATION`.** Grader misto: schema + grounding programmatici, rubrica LLM-judge per tono e assenza di diagnosi. Prova anche lo stesso modello con `effort` diverso: spesso è la variabile più economica.
-- [ ] 11.13 🔭 **Esperimenti dall'interfaccia.** Langfuse permette di lanciare un esperimento su un dataset direttamente dall'UI (prompt × modello) senza codice. Provalo su `safety-v1`: è utile per iterare sui prompt senza toccare il runner, ma non esegue la **tua** pipeline (schema, router, tool). Annota quando usare l'uno e quando l'altro.
-- [ ] 11.14 💡 Prova anche **Amazon Bedrock Evaluations** (giudice LLM gestito da AWS) per capire cosa offre il provider. Confronta con Langfuse: dove vivono i dati, quanto controllo hai sulla rubrica, come si integra con la pipeline reale.
-- [ ] 11.15 💡 **L'eval è vivo.** Ogni bug trovato in produzione diventa un item (da Langfuse: trace → "aggiungi a dataset"). Ogni item su cui tutti i modelli fanno 100% va reso più difficile o archiviato. Ricalibra il giudice quando cambi modello giudice.
+- [ ] 9.1 💡 Model the pipeline as an **explicit workflow**, not a free-running agent: a `Stage` enum and one function per step, each with typed input and output. The code decides the flow; the LLM works inside the steps. That is the right pattern when the flow is known in advance, and it makes every step testable on its own.
+- [ ] 9.2 Implement `STATE_READ` → `SAFETY` (with `RETRIEVAL` in parallel through `tokio::join!`, discarding its result if `SAFETY` blocks) → `GENERATION` → `GUARDRAILS` → `STATE_WRITE` → reply → `PROFILE_UPDATE` in the background (`tokio::spawn`, with tracing linked to the request's span).
+- [ ] 9.3 🔭 **One trace per message.** The root span is the trace, with `session.id` as the conversation, a pseudonymized `user.id`, `tags = ["pipeline", environment]`, `input` as the user message and `output` as the final reply. One child span per step, named after the step; LLM calls are generations inside the step. `PROFILE_UPDATE` runs after the reply: make it either a delayed child span **or** a separate trace with `metadata.parent_trace_id`; choose and document. Every prompt used carries its name and version (6.6).
+- [ ] 9.4 💡 **Escalation.** The `SAFETY` escalation replies are **fixed texts** decided by people, not generated: in a healthcare domain that is a safety and accountability choice. Put them in configuration. 🔭 Tag the trace `escalation:<type>`.
+- [ ] 9.5 💡 🔭 **The evaluator-optimizer loop.** If `GUARDRAILS` fails, re-run `GENERATION` with the failure reason in the prompt; at most two attempts, then a safe fallback reply. Record the outcome as a **score** on the trace (`guardrail_pass` boolean, `guardrail_failure_type` categorical) and the attempt count in metadata: failure frequency becomes a chart and an alert in Module 14.
+- [ ] 9.6 💡 **Robustness.** A timeout per step; retries with backoff and jitter only on retryable errors; idempotent writes (a repeated request must not duplicate turns); an atomic `PROFILE_UPDATE` with rollback; clean cancellation if the client disconnects (`CancellationToken`). Errors become spans with `level = ERROR` and a `status_message`, so you can filter them in Langfuse.
+- [ ] 9.7 Expose the pipeline over HTTP with `axum`: `POST /chat` (full reply) and `POST /chat/stream` (SSE). Fake authentication for now (a header carrying `user_id`). Return the `trace_id` in the response body: you need it to attach user feedback (Module 14).
+- [ ] 9.8 🧪 Measure per-step latency in Langfuse over 20 synthetic messages: `SAFETY`, `GENERATION` (time to first token and total), `GUARDRAILS`. Compare against the estimates in the source document. Record cost per message (Langfuse sums it per trace).
+- [ ] 9.9 🧪 **Extension: streaming with parallel guardrails.** Forward `GENERATION` tokens to the client as they arrive while `GUARDRAILS` analyzes the accumulated text (in chunks, or at end of stream). On failure, send a `retract` event followed by the corrected reply. ⚠️ This is an epic of its own: buffering, clean aborts, and the user experience of text disappearing. Do it only after the synchronous version is stable and measured, and document the trade-off in an ADR.
+- [ ] 9.10 💡 **The agentic alternative.** In a branch, rewrite `GENERATION` as an agent with tools (`search_knowledge_base`, `get_user_profile`) instead of pre-injected context. Compare quality, cost, latency and predictability in Langfuse. This comparison is the central lesson of "workflow versus agent".
+- [ ] 9.11 ADR: pipeline structure, concurrency choices, retry policy, the workflow-versus-agent decision, the shape of the trace.
 
-**Fatto quando** i dataset vivono in git e in Langfuse in modo sincronizzato, il runner produce dataset run con score e un report con intervalli di confidenza, un evaluator gestito gira sulle trace degli esperimenti ed è calibrato contro annotazioni umane, e hai due ADR con la scelta dei modelli per `SAFETY` e `GENERATION`.
+**Done when** `POST /chat` answers end to end on synthetic data, every message produces a Langfuse trace with one span per step and guardrail scores, the profile updates in the background without corrupting itself on error, and you have a table of per-step latency and cost.
 
-**Autoverifica.** Se il run A fa 92% e il run B 88% su 25 casi con 1 ripetizione, cosa puoi concludere? (Niente: il rumore è ±20 punti.) Perché il runner deve chiamare la pipeline reale e non una copia semplificata?
+**Self-check.** Why can `RETRIEVAL` start in parallel with `SAFETY` while `GENERATION` cannot? What makes an update "atomic" in your code?
 
 ---
 
-## Modulo 12 · Suite di test anti-regressione
+## Module 10 · Model router
 
-⏱ 8–10 ore.
+⏱ 8–10 hours.
 
-**Obiettivo.** Una piramide di test che protegge l'harness (deterministico) e l'integrazione con i modelli (non deterministica) con strumenti diversi e cadenze diverse, con Langfuse come registro dei risultati degli esperimenti di regressione.
+**Goal.** A `router` crate that picks the model for each call according to explicit rules, handles fallback and degradation, and surfaces its decisions in Langfuse.
 
-**Perché conta.** I modelli cambiano sotto i tuoi piedi (nuove versioni, cambi di comportamento del provider), i prompt cambiano per mano tua (e ora anche da un'interfaccia web), l'harness cambia per refactoring. Servono reti diverse.
+**Why it matters.** Every step has different needs; a classification does not need the biggest model. The router is where cost, latency, quality and availability meet. Done badly it hides problems; done well it is the cheapest optimization lever you have.
 
-### Passi
+### Steps
 
-- [ ] 12.1 💡 **Livello 1: unit test dell'harness (PR, senza rete).** Tutto ciò che è logica pura: rendering dei prompt, parsing dell'output strutturato, finestra a budget di token, regole della vista compatta, decisioni del router, loop dei tool, fallback del `PromptStore`. Usa `FakeLlmClient` e un `FakePromptStore`. Devono essere centinaia e girare in secondi con `cargo nextest`.
-- [ ] 12.2 💡 🔭 **Snapshot test dei prompt.** Con `insta`, uno snapshot del prompt **renderizzato** per ogni step con input fissi, a partire dagli snapshot in `prompts/` scaricati da Langfuse (6.5). Se qualcuno sposta la label `production` in Langfuse, il prossimo `just prompts-pull` cambia il file, lo snapshot fallisce e la modifica compare nel diff della PR: è il tuo controllo di revisione sui prompt modificati dall'interfaccia.
-- [ ] 12.3 💡 **Livello 2: test dell'adapter Bedrock (PR, senza rete).** Con `aws-smithy-mocks` (o `StaticReplayClient` dell'SDK) simuli le risposte del servizio: verifichi la mappatura dei tipi, la gestione degli eventi di streaming, la classificazione degli errori (throttling, validazione, accesso negato), il comportamento dei retry. Registra risposte reali una volta e usale come fixture. Stesso approccio per il client Langfuse con `wiremock`.
-- [ ] 12.4 💡 **Livello 3: contract test con i servizi veri (nightly, `#[ignore]`).** Pochi test, uno per capacità dichiarata nella `ModelRegistry`: il modello risponde; supporta i tool; supporta lo structured output; il cache read funziona; lo streaming emette gli eventi attesi; `max_tokens` piccolo produce `stop_reason = max_tokens`. Più due per Langfuse: una trace inviata via OTel compare via API entro N secondi; un prompt `production` si scarica. Girano con `cargo nextest run --run-ignored ignored-only` e credenziali fornite dalla CI via OIDC (mai access key statiche nei secret).
-- [ ] 12.5 💡 🔭 **Livello 4: esperimenti di regressione (nightly o su cambi di prompt/modello).** La nightly lancia il runner del Modulo 11 sui dataset di regressione e poi legge gli score del run via API e li confronta con **soglie**: `safety.false_negative_rate ≤ 2%`, `generation.schema_valid ≥ 99%`, `generation.grounded ≥ 95%`, costo medio per messaggio ≤ X. La soglia va fissata **sopra il rumore** stimato: altrimenti il test è un generatore di falsi allarmi. Fallimento = build rossa, con link al run in Langfuse nel messaggio. Un **alert** Langfuse sullo score medio del run (Modulo 14) è la seconda rete.
-- [ ] 12.6 💡 **Non determinismo.** Nei test di livello 3 e 4 non asserire mai su testo esatto: asserisci proprietà (schema valido, campo presente, valore in un insieme), su più ripetizioni, oltre una soglia. Segna i test soggetti a flakiness e traccia il loro tasso di fallimento: se sale, è un segnale, non un fastidio.
-- [ ] 12.7 💡 **Pinning e canary.** Fissa le versioni dei modelli dove il provider lo consente; quando arriva una versione nuova, fai girare l'intera suite di livello 3 e 4 sulla nuova versione **prima** di cambiare la registry (è il tuo canary): in Langfuse il run nuovo si confronta con l'ultimo run buono. Documenta la migrazione in un ADR.
-- [ ] 12.8 Property-based test con `proptest` per le funzioni "ostili": finestra a budget con turni di lunghezza casuale, parser dell'output strutturato con JSON quasi valido, tokenizzazione approssimata.
-- [ ] 12.9 Test di sicurezza come regressione: un dataset `injection-v1` di tentativi di prompt injection che **non devono** cambiare il comportamento di `GENERATION` né bypassare `SAFETY` (Modulo 13). È un dataset Langfuse come gli altri.
-- [ ] 12.10 Collega tutto alla CI: `ci.yml` esegue livelli 1–2; `nightly.yml` esegue 3–4 e pubblica il report con i link ai run; un badge nel README.
+- [ ] 10.1 💡 **ModelRegistry.** A table of `ModelSpec` entries loaded from configuration (TOML): `id`, `provider`, `tier` (small/mid/large), input/output/cache price per Mtok, context window, `supports_tools`, `supports_structured_output`, `supports_streaming`, `region_profile`, quotas (rpm, tpm), measured p50 latency. You **verify capabilities with tests** (Module 12), you do not copy them from the docs. The prices must match the ones entered in Langfuse (5.4): keep them in one file and generate both.
+- [ ] 10.2 💡 **Routing strategies**, in increasing order of complexity:
+  1. **Static per step**: `SAFETY → small`, `GENERATION → mid/large`, `GUARDRAILS → small`, `PROFILE_UPDATE → small`. This covers 90% of real cases. The prompt's `config` in Langfuse (6.4) names the **role** (`fast`, `main`) and the router translates a role into a model, so changing the model does not mean touching the prompt, and vice versa.
+  2. **Rule-based**: on input length, language, presence of tools, structured output requirements, premium users.
+  3. **Cascading**: try the cheap model; if its stated confidence is low or the output fails schema validation, escalate to the bigger one. Measure how often it escalates.
+  4. **Classifier-driven**: a small model (or a rule) estimates difficulty and picks the tier. Mind the cost of the extra call.
+  5. **Managed**: *Amazon Bedrock Intelligent Prompt Routing* picks among models in a family based on the prompt. Try it to see what it does, and compare it with your strategy 3.
+- [ ] 10.3 💡 **Fallback and resilience.** A chain per role: primary → secondary (same tier, different model or a different EU region) → degradation (a courtesy reply, a queue). Retry only on retryable errors, with backoff and jitter (the SDK does this for a single call; the router does it **across models**). A circuit breaker per model: after N errors in T seconds, skip to the secondary for a while, then probe again gradually.
+- [ ] 10.4 💡 **Constraints to respect.** The request's remaining timeout (falling back makes no sense with 200 ms left); per-model quotas (a local token bucket with `governor` keeps you out of throttling); region (never leave the EU); capability (do not route a request with tools to a model that does not support them).
+- [ ] 10.5 ⚠️ **The cache is per model.** Switching models mid-conversation invalidates the prompt cache and can change style and behaviour. The router should prefer **per-session stability**: pin the model at the start of a conversation and change it only on errors, not for instantaneous optimization.
+- [ ] 10.6 🔭 **The router in Langfuse.** Every generation carries `router.role`, `router.reason` (`static`, `fallback:throttled`, `escalation:low_confidence`) and `router.attempt` in its metadata; the model actually used is already in the model field. In Langfuse build a **dashboard** with: generation distribution per model, cost per role, fallback counts (filtered on metadata). You will see immediately if a cheap model escalates too often.
+- [ ] 10.7 💡 **Controlled experimentation.** Support a per-request `override` (a header or config) to force a model: you need it for the experiments in Module 11. Add *shadow routing*: the request goes to model A and a sample (say 5%) **also** goes to B in the background purely for comparison, without affecting the user's reply; the shadow generation carries a `shadow` tag.
+- [ ] 10.8 🧪 Simulate failures with `FakeLlmClient` (a burst of throttling, timeouts, invalid output) and verify: correct fallback, a circuit breaker that opens and closes again, and no request exceeding the configured quota.
+- [ ] 10.9 🧪 With real models: compare the static strategy against the cascade over 50 synthetic messages. Total cost, p50/p95 latency, quality (Module 11). Write the ADR with the decision.
 
-**Fatto quando** una modifica di prompt in Langfuse fa fallire uno snapshot in PR dopo il pull; un mock di throttling è gestito correttamente; la nightly gira sui servizi veri, produce dataset run in Langfuse e li confronta con soglie.
+**Done when** the router is configured from a file, tested against failures without a network, and every decision is readable in Langfuse with its reason.
 
-**Autoverifica.** Perché un test di livello 4 con soglia al 95% su 20 casi e 1 ripetizione è un test inutile? Cosa protegge dal rischio che qualcuno sposti `production` su un prompt non testato?
+**Self-check.** Why is "the cheapest model that passes the tests" the wrong rule for `GENERATION` when the cost per **completed task** (not per call) is higher because of retries and regenerations?
 
----
-
-## Modulo 13 · Sicurezza, privacy e guardrail
-
-⏱ 6–8 ore.
-
-**Obiettivo.** Difese a strati contro input ostili, fuga di dati e comportamenti fuori scopo; conformità di base per dati sanitari in UE, inclusi i dati che finiscono in Langfuse.
-
-**Perché conta.** Un'applicazione agentica ha una superficie d'attacco nuova: l'input dell'utente e i documenti recuperati sono testo che il modello potrebbe interpretare come istruzioni. Nel sanitario un errore è un danno reale. E lo strumento di osservabilità, per sua natura, **copia** i dati: va governato come il sistema che osserva.
-
-### Passi
-
-- [ ] 13.1 📚 Leggi la *OWASP Top 10 for LLM Applications*. Per ognuna delle dieci voci scrivi se e come tocca il progetto guida.
-- [ ] 13.2 💡 **Prompt injection.** Difese: delimitazione chiara dei dati (tag XML), istruzioni nel system prompt sul trattare i contenuti come dati, privilegi minimi ai tool (un tool non può fare più di quanto serve), conferma umana per azioni irreversibili, validazione dell'output prima di eseguirlo o mostrarlo. Nessuna difesa è completa: per questo servono più strati e il dataset di regressione (12.9).
-- [ ] 13.3 💡 **Bedrock Guardrails.** Crea un guardrail con: filtri di contenuto, argomenti negati (per esempio "diagnosi"), filtro PII con mascheramento, controllo di grounding (l'output è supportato dalla fonte?). Applicalo con `ApplyGuardrail` a input e output come strato **aggiuntivo** al tuo `GUARDRAILS` LLM. Confronta: cosa prende uno che l'altro non prende? Costo e latenza aggiunti? 🔭 L'esito è uno score in più sulla trace (`bedrock_guardrail_action`).
-- [ ] 13.4 💡 🔭 **Dati personali nel prompt e nelle trace.** Minimizza ciò che entra nel prompt; pseudonimizza gli identificativi (lo `user.id` in Langfuse non deve mai essere un identificativo reale); nelle trace applica la **redazione della PII prima dell'esportazione** (la funzione di 5.10: nomi, telefoni, email, codici fiscali; per il testo libero valuta un modello piccolo o le API di Bedrock Guardrails per la PII); definisci la **retention** per progetto in Langfuse; documenta il flusso dei dati (chi vede cosa, in che regione). Bedrock non usa i tuoi dati per addestrare modelli e non li conserva oltre la richiesta, salvo logging attivato da te: rivedi la scelta di 3.9.
-- [ ] 13.5 💡 🔭 **Residenza dei dati.** Solo inference profile `eu.*`; nessuna funzione che instrada fuori dall'UE; Langfuse Cloud regione UE oppure self-hosted in AWS UE (Modulo 15); verifica dove finiscono log, trace, dataset, export. Scrivi tutto in un ADR: sarà la base per la revisione legale.
-- [ ] 13.6 💡 **IAM a privilegio minimo.** Sostituisci `AmazonBedrockFullAccess` con una policy sugli ARN degli inference profile usati; ruoli distinti per app, CI ed eval; nessuna access key statica in produzione (ruoli IAM per ECS/Lambda, OIDC per GitHub Actions).
-- [ ] 13.7 💡 🔭 **Segreti e accessi Langfuse.** API key Langfuse in Secrets Manager, distinte per app, CI e runner; in Langfuse, membri con ruoli minimi (chi può spostare `production` sui prompt, chi può vedere le trace con contenuti); label `production` **protetta**.
-- [ ] 13.8 💡 **Abuso e costi.** Rate limit per utente (`governor` in axum), lunghezza massima del messaggio, tetto di costo per sessione e per giorno, alert su anomalie (un utente che genera il 30% del costo: in Langfuse la vista *Users* lo mostra).
-- [ ] 13.9 💡 **Output verso l'utente.** Le risposte di escalation sono fisse (9.4). Le risposte generate passano da `GUARDRAILS`, da Bedrock Guardrails e da una validazione programmatica (lunghezza, lingua, niente URL non in whitelist).
-- [ ] 13.10 ADR: modello delle minacce, controlli per strato, cosa resta scoperto e perché.
-
-**Fatto quando** il dataset di injection passa, Bedrock Guardrails è integrato e misurato, IAM è a privilegio minimo, le trace in `prod` sono redatte, la retention è impostata e l'ADR sui dati è scritto.
-
-**Autoverifica.** Perché "scrivo nel prompt di ignorare le istruzioni contenute nei documenti" non basta come difesa? Perché il tuo strumento di osservabilità va trattato come un sistema che elabora dati personali?
+**Going deeper.** Bedrock's *Intelligent Prompt Routing* page; the orchestrator-workers pattern for delegating sub-tasks to small models without changing the model in the main loop.
 
 ---
 
-## Modulo 14 · Osservabilità in produzione con Langfuse
+## Module 11 · Evaluating models with datasets and experiments
 
-⏱ 8–10 ore.
+⏱ 10–12 hours.
 
-**Obiettivo.** Langfuse come centro operativo: ogni richiesta è una trace con uno span per step; dashboard e alert sulle metriche che contano; valutazione **online** con giudici gestiti su un campione del traffico; feedback degli utenti come score; code di annotazione per la revisione umana; correlazione con il resto dell'infrastruttura.
+**Goal.** A runner in `evals` that executes a **Langfuse dataset** with a configuration (model, prompt@version, effort), records results as a **dataset run** with scores, and produces a comparable report: quality with a confidence interval, cost, latency. Plus Langfuse-managed LLM judges and calibration against human annotations.
 
-**Perché conta.** In produzione non puoi leggere ogni conversazione. Devi sapere: quanto costa, quanto è lento, quanto spesso i guardrail scattano, quando un modello cambia comportamento, e poter ricostruire una singola conversazione problematica in pochi minuti.
+**Why it matters.** Without evaluation you decide by feel. With a **broken** evaluation you decide confidently in the wrong direction. Most "surprising results" are bugs in the evaluation.
 
-### Passi
+### Steps
 
-- [ ] 14.1 💡 **Cosa osservare.** Per richiesta: `trace_id`, `session_id`, `user_id` pseudonimizzato, step, modello scelto e motivo, prompt name+version, token in/out/cache, costo, latenza (time-to-first-token e totale), `stop_reason`, esito guardrail, errori classificati, tool chiamati con durata. Aggregati: costo/giorno e per ruolo, p50/p95 latenza per step, tasso errori per modello, tasso fallimenti guardrail, tasso fallback del router, cache hit rate, distribuzione dei modelli, score di qualità online. Quasi tutto è già nelle trace dei Moduli 5–10: qui lo rendi leggibile.
-- [ ] 14.2 🔭 **Ambienti e release.** Ogni trace porta `environment` (`prod`, `staging`) e `release` (versione o commit dell'app). Così ogni grafico si filtra per ambiente e ogni cambiamento di metrica si allinea a un deploy.
-- [ ] 14.3 🔭 **Dashboard.** In *Dashboards* costruisci una dashboard "Pipeline" con: costo giornaliero per ruolo del router; p95 latenza per step (filtro sul nome dello span); conteggio trace per tag `escalation:*`; tasso `guardrail_pass` (la media di uno score booleano è la percentuale di veri); tasso fallback (metadata `router.reason` che inizia con `fallback`); cache read su input totale; distribuzione delle generation per modello. Aggiungi la vista **Pulse** sulla tabella delle observation per individuare outlier di costo e latenza.
-- [ ] 14.4 🔭 **Alert.** In Langfuse crea alert a soglia con notifica Slack o webhook su: `guardrail_pass` medio sotto soglia nell'ultima ora (un salto improvviso spesso significa che il provider ha cambiato modello o che qualcuno ha spostato `production` su un prompt); costo giornaliero sopra budget; p95 di `GENERATION` sopra soglia; tasso di errori per modello. Collega gli alert degli evaluator (14.6) direttamente dalla pagina dell'evaluator.
-- [ ] 14.5 🔭 **Costi riconciliati.** Il costo che Langfuse calcola (dai token e dai prezzi di 5.4) va confrontato mensilmente con la bolletta AWS filtrata per il tag di 3.8 e per **Application Inference Profile** (crea un profilo applicativo per ambiente: Cost Explorer mostra il costo per profilo). Se non coincidono entro il 5%, un prezzo o un model id nella registry è sbagliato.
-- [ ] 14.6 🔭 **Valutazione online.** Gli evaluator LLM-as-a-judge del Modulo 11 girano anche in produzione: configurali con un filtro (`environment = prod`, campionamento per esempio del 5%, esclusi gli step non pertinenti) così Langfuse assegna `no_diagnosis` e `grounded_in_kb` a un campione del traffico reale. Il costo del giudice è misurabile e va tenuto sotto controllo con il campionamento. Aggiungi anche evaluator **a codice** (per esempio: la risposta cita solo ID KB esistenti) dove non serve un modello.
-- [ ] 14.7 🔭 **Feedback degli utenti.** Il client invia pollice su/giù (e un commento opzionale) con il `trace_id` ricevuto in 9.7; l'app lo scrive come score `user_feedback` sulla trace via API. In Langfuse filtra le trace con feedback negativo: sono la prima fonte di nuovi item per i dataset (11.15).
-- [ ] 14.8 🔭 **Revisione umana continua.** Un'annotation queue "revisione clinica settimanale" alimentata automaticamente: trace con `guardrail_pass = false`, con feedback negativo, o con score del giudice sotto soglia. Una persona le etichetta; il confronto tra etichette umane e giudice tiene il giudice calibrato nel tempo (11.7).
-- [ ] 14.9 💡 **Drift.** Confronta settimanalmente gli score online e le distribuzioni (lunghezza risposte, tasso escalation, costo per messaggio) con la baseline della release precedente: un cambiamento senza deploy tuo è quasi sempre un cambiamento del modello o di un prompt. Il confronto tra dataset run (12.7) conferma o smentisce.
-- [ ] 14.10 💡 **Il resto dell'infrastruttura.** Langfuse è specializzato sull'LLM; CPU, memoria, database, code e latenza HTTP vivono altrove (in azienda: Datadog). Due modi per correlare: (a) usare **OpenTelemetry Collector** come fan-out, l'app manda le trace al collector e il collector le invia sia a Langfuse sia a Datadog (le stesse trace, con `trace_id` identico, in due posti); (b) esportare da Langfuse le metriche aggregate via **Metrics API** verso il sistema di monitoraggio esistente. Prova (a): è il pattern che ti permette di cambiare backend senza toccare l'app.
-- [ ] 14.11 💡 🔭 **Volume e costi di Langfuse.** Stima trace/mese e osservation/trace; verifica i limiti del piano Cloud o il dimensionamento del self-host; imposta la retention; usa l'**export batch** (verso S3) per l'analisi storica offline.
-- [ ] 14.12 Scrivi un runbook breve: "la latenza sale" → cosa guardare in Langfuse e in Datadog; "i guardrail scattano di più" → confronta prompt version e modello delle ultime ore; "il costo raddoppia" → dashboard costo per ruolo, poi *Users*; "lo score online cala" → ultimo run di regressione, ultimo deploy, ultimo spostamento di label.
-- [ ] 14.13 🧪 Prova a debuggare una conversazione: da un `trace_id` ricostruisci tutti gli step, i prompt esatti (con versione, cliccabili dalla generation), le decisioni del router e il costo. Se non ci riesci in cinque minuti, manca qualcosa nella strumentazione.
+- [ ] 11.1 📚 🔭 Read *LLM Evaluation Concepts* and *Evaluation Overview* in the Langfuse docs. Fix these: **dataset** (a collection of items with `input`, `expected_output`, `metadata`), **dataset run** (an experiment: each executed item produces a trace linked to the item, plus scores), **evaluator** (an LLM judge or a function assigning scores to production or experiment traces), **annotation queue** (a queue for human labelling), **score** in its three types (numeric, categorical, boolean).
+- [ ] 11.2 💡 **What you evaluate, per step.** `SAFETY`: accuracy, and above all **false negatives** (a risk that went unseen). `GENERATION`: schema conformance, correct use of knowledge base references (no claims absent from the cited records), tone, Italian language quality, absence of diagnosis. `GUARDRAILS`: agreement with human judgement. `PROFILE_UPDATE`: extraction correctness. Each step gets its own dataset.
+- [ ] 11.3 🔭 **Datasets.** Source of truth: JSONL files under `datasets/`, versioned in git. A `just datasets-push` command uploads them to Langfuse as datasets (`safety-v1`, `generation-v1`…) through the API. Where the cases come from: written by hand, synthesized with a model **and then reviewed by a person**, or (in production) from real traces added to the dataset with one click in the Langfuse interface. ⚠️ Never use the output of the model under evaluation as ground truth. Balance the classes. For `SAFETY`, include cases in both directions explicitly (must fire / must not fire).
+- [ ] 11.4 💡 **Types of grader.** (1) Programmatic: exact match, schema validation, regex, checking that cited knowledge base ids exist. (2) Rubric with an LLM judge: **atomic** properties scored one at a time (`no_diagnosis`, `grounded_in_kb`, `tone_ok`), with structured output, treating the candidate text as data rather than instructions. (3) Pairwise: two answers, which is better (randomize the A/B order). Use a judge from a **different family** than the model under evaluation when you can.
+- [ ] 11.5 🔭 **The runner as a dataset run.** `just eval --dataset safety-v1 --model X --prompt safety-classifier@v3 --reps 3` does this: create a run with a descriptive name (`safety-v1 / haiku / v3 / 2026-09-20`); for every item and repetition, execute the step's real pipeline (not a copy); link the trace to the dataset item; compute the programmatic graders and write them as scores on the run. Run metadata: model, prompt@version, effort, git commit.
+- [ ] 11.6 🔭 **Langfuse-managed judges.** Under *Evaluation → Evaluators* create an LLM-as-a-judge evaluator for `no_diagnosis` and one for `grounded_in_kb`, with your rubric, connected to Bedrock, filtered to experiment traces. Langfuse runs them by itself on every new matching trace. Compare with the alternative, a judge inside the runner: the former is convenient and reusable in production (Module 14), the latter is testable and versioned in git. You can keep both.
+- [ ] 11.7 🔭 **Calibrating the judge.** Send 30–50 traces to an **annotation queue**, label them yourself (or with a clinical colleague) using the same scores the judge assigns, then compare judge-versus-human agreement. Below 90% on clear-cut cases, the rubric needs another pass. Repeat whenever you change the judge model.
+- [ ] 11.8 💡 **Performance metrics from the API, not estimated.** Input, output and cache tokens from the response; cost computed from the price list of the model **that actually answered**; latency of the successful call only, excluding retries. The judge's cost is visible separately in Langfuse because its generations are distinct traces.
+- [ ] 11.9 💡 **Repetitions and noise.** Run every case R times (at least 2–3). The half-width of the confidence interval on a success rate is roughly `1/sqrt(n·R)`: 30 cases × 2 repetitions ≈ ±13 points. If the difference between two runs is below the noise, **there is no difference**. The runner prints that number in the report; Langfuse shows per-run averages, not intervals, so compute them yourself.
+- [ ] 11.10 💡 **Evaluation harness hygiene.** Separate infrastructure errors (timeouts, throttling, output truncated at `max_tokens`) from model errors: the former become an `infra_error = true` score and never enter the quality average. The full trajectory is already in Langfuse (the trace linked to the item). Verify that the model that answered is the one requested. Run an **oracle** (the expected answers must pass) and a **null baseline** (an empty answer must fail): if either misbehaves, the evaluation is broken.
+- [ ] 11.11 🧪 🔭 **Model comparison for `SAFETY`.** Three runs (Haiku, Sonnet, a non-Anthropic model) on the same dataset and prompt. Use Langfuse's **run comparison** view for the dataset: average scores, cost and latency side by side. Then open the cases where the runs disagree: they are the most instructive. Decision in an ADR.
+- [ ] 11.12 🧪 **Comparison for `GENERATION`.** A mixed grader: programmatic schema and grounding checks, an LLM-judge rubric for tone and absence of diagnosis. Also try the same model at different `effort`: it is often the cheapest variable.
+- [ ] 11.13 🔭 **Experiments from the interface.** Langfuse can launch an experiment on a dataset directly from the UI (prompt × model) with no code. Try it on `safety-v1`: it is useful for iterating on prompts without touching the runner, but it does not execute **your** pipeline (schema, router, tools). Note when to use which.
+- [ ] 11.14 💡 Also try **Amazon Bedrock Evaluations** (an AWS-managed LLM judge) to see what the provider offers. Compare with Langfuse: where the data lives, how much control you have over the rubric, how well it integrates with the real pipeline.
+- [ ] 11.15 💡 **The evaluation is alive.** Every bug found in production becomes an item (in Langfuse: trace → "add to dataset"). Every item on which all models score 100% is made harder or retired. Recalibrate the judge whenever you change the judge model.
 
-**Fatto quando** esiste una dashboard "Pipeline" con alert attivi, un evaluator online gira su un campione di `prod`, il feedback utente arriva come score, un'annotation queue si riempie da sola, e il runbook è scritto.
+**Done when** datasets live in git and in Langfuse in sync, the runner produces dataset runs with scores and a report with confidence intervals, a managed evaluator runs on experiment traces and is calibrated against human annotations, and you have two ADRs recording the model choice for `SAFETY` and `GENERATION`.
 
-**Autoverifica.** Perché il tasso `guardrail_pass` è un ottimo "canarino" per i cambiamenti silenziosi del provider? Perché il campionamento è indispensabile per la valutazione online?
-
-**Approfondimenti.** Documentazione Langfuse: *Evaluation* (evaluators su traffico live), *Dashboards*, *Alerts*, *Annotation Queues*, *Metrics API*, *Public API*.
-
----
-
-## Modulo 15 · Deploy in produzione
-
-⏱ 8–12 ore.
-
-**Obiettivo.** L'applicazione gira su AWS con ruoli IAM (non chiavi), configurazione per ambiente, streaming funzionante, rollout graduale, controlli di costo; e una decisione motivata su dove gira Langfuse.
-
-**Perché conta.** Molte scelte fatte finora (streaming, timeout, cache, quote, volume di trace) si misurano solo con un deploy reale e un po' di carico.
-
-### Passi
-
-- [ ] 15.1 **Packaging.** Dockerfile multi-stage per Rust (build in un'immagine con toolchain, runtime `distroless` o `debian-slim`), binario ottimizzato (`--release`, LTO), immagine piccola. Scansione vulnerabilità (`cargo deny`, scanner immagini).
-- [ ] 15.2 💡 **Configurazione a 12 fattori.** Tutto da variabili d'ambiente o Parameter Store: regione, model id per ruolo, budget di contesto, soglie del router, host e chiavi Langfuse, politica di tracing (contenuti, campionamento). Nessun `if env == prod` nel codice.
-- [ ] 15.3 💡 **Dove eseguire l'app.** Valuta tre opzioni e scegli con un ADR: **ECS Fargate** (servizio HTTP sempre acceso, streaming SSE naturale, il default sensato); **AWS Lambda** con `cargo-lambda` (ottimo per carichi a picchi; ⚠️ streaming delle risposte, timeout e **flush delle trace OTel** prima della fine dell'invocazione vanno verificati); **Bedrock AgentCore Runtime** (ambiente gestito per agenti, con Gateway per i tool, Memory, Policy con Guardrails, Observability integrata: utile per capire cosa "compra" un runtime gestito).
-- [ ] 15.4 💡 🔭 **Dove eseguire Langfuse.** Due opzioni, ADR obbligatorio:
-  - **Langfuse Cloud, regione UE**: nessuna operatività, dati in Irlanda, conformità documentata dal fornitore; da verificare con il legale come sub-responsabile del trattamento.
-  - **Self-hosted su AWS UE**: `web` e `worker` su ECS, PostgreSQL su RDS, ClickHouse (self-managed su EC2/EKS oppure ClickHouse Cloud in regione UE), Redis su ElastiCache, S3 per blob ed export. Massimo controllo sui dati, ma sei tu a gestire aggiornamenti, backup e capacità.
-  🧪 Fai almeno una volta il self-host **in locale** con Docker Compose per toccare con mano i componenti e capire cosa comporta gestirli.
-- [ ] 15.5 **Identità.** Ruolo IAM del task/funzione con la policy minima del Modulo 13. Nessuna credenziale nell'immagine. Chiavi Langfuse da Secrets Manager.
-- [ ] 15.6 **Server.** `axum` con health check (`/healthz`, `/readyz`), graceful shutdown (finisci le richieste in corso, cancella i task in background con criterio, **flush dell'exporter OTel**), timeout per richiesta, limiti di dimensione del body, rate limit per utente, CORS se serve.
-- [ ] 15.7 **Stato.** SQLite non basta in produzione multi-istanza: PostgreSQL gestito (RDS) con `pgvector` per la KB. Migrazioni versionate (`sqlx migrate`).
-- [ ] 15.8 💡 🔭 **Rollout graduale.** Per l'app: due versioni in parallelo (blue/green o canary sul 5% del traffico). Per i prompt: la versione attiva è la **label** `production` in Langfuse, quindi un rollback di prompt è uno spostamento di label, senza deploy; una label `canary` letta dal 5% delle richieste permette di provare un prompt nuovo su traffico reale, con gli score online (14.6) filtrati per versione del prompt a dire se promuoverlo. Tieni la cache dei prompt corta abbastanza (5–10 minuti) da rendere il rollback rapido.
-- [ ] 15.9 💡 **Controlli di costo.** Budget e alert già attivi (3.8, 14.4); aggiungi un interruttore di emergenza (kill switch) che degrada il servizio (solo escalation e risposte fisse) se il costo orario supera una soglia.
-- [ ] 15.10 🧪 **Test di carico.** Con `k6` o `oha`, 20–50 utenti simulati con messaggi sintetici. Osserva: throttling di Bedrock (le quote di 3.7), p95 per step in Langfuse, comportamento del router sotto stress, costo per minuto, ritardo di ingestione delle trace. Ritocca quote, timeout, circuit breaker e dimensione dei batch dell'exporter.
-- [ ] 15.11 Pipeline di deploy: build su tag, push su ECR, deploy su ECS con approvazione manuale per produzione; la nightly del Modulo 12 deve essere verde per poter promuovere.
-- [ ] 15.12 Runbook operativo: come fare rollback dell'app e di un prompt, come cambiare modello di emergenza (override nel router), come spegnere il tracing dei contenuti, chi chiamare.
-
-**Fatto quando** l'app risponde in produzione con streaming, le trace arrivano in Langfuse con `environment = prod`, gli alert sono attivi, e hai fatto almeno un rollback di prompt spostando una label.
-
-**Autoverifica.** Perché la versione attiva del prompt deve essere una label e non codice? Quali sono i costi nascosti del self-hosting di Langfuse?
+**Self-check.** If run A scores 92% and run B scores 88% over 25 cases with one repetition, what can you conclude? (Nothing: the noise is ±20 points.) Why must the runner call the real pipeline rather than a simplified copy?
 
 ---
 
-## Modulo 16 · Approfondimenti opzionali
+## Module 12 · Regression test suite
 
-Da esplorare quando il core è solido. Ognuno è un piccolo esperimento con scheda nel Diario.
+⏱ 8–10 hours.
 
-- [ ] 16.1 **Framework agentici a confronto.** Reimplementa l'agente del Modulo 7 con **Rig** (`rig-core` + `rig-bedrock`, il framework Rust più maturo, con tool tipizzati, RAG, MCP e attributi OpenTelemetry già inclusi). Confronta righe di codice, controllo sul loop, testabilità, osservabilità in Langfuse. Per capire cosa fa un framework "completo", guarda anche i concetti di LangChain 1.x (Python: `create_agent`, middleware, LangGraph) senza cambiare stack: il tuo harness **è** un agente con middleware scritti a mano. ADR "framework vs harness a mano".
-- [ ] 16.2 **Multi-agente (orchestrator-workers).** Un orchestratore delega sotto-task a worker con modello economico e contesto isolato; poi sintetizza. In Langfuse la trace mostra l'albero completo. Confronta con la pipeline a singolo modello su un task di ricerca nella KB con più domande.
-- [ ] 16.3 **Tool search e caricamento su richiesta.** Quando i tool sono decine, il loro elenco costa: tecniche per esporre solo i tool rilevanti per turno (indice locale, descrizioni brevi + schema completo su richiesta).
-- [ ] 16.4 **Memoria come tool.** Dare al modello un tool `memory_read/write` su una directory o tabella, e lasciare che decida cosa ricordare; confronta con il profilo strutturato del Modulo 8.
-- [ ] 16.5 **Langfuse più a fondo.** Prompt composti (un prompt che ne include altri, per riusare regole comuni tra `GENERATION` e `GUARDRAILS`); webhook sui cambi di prompt per far partire la nightly quando qualcuno sposta `production`; score a livello di **sessione** (qualità dell'intera conversazione, non del singolo messaggio); trace multimodali; export batch verso S3 e analisi con DuckDB.
-- [ ] 16.6 **Bedrock AgentCore in profondità.** Runtime, Gateway (tool via MCP con autenticazione), Memory, Policy con Guardrails, Observability. Quanto del tuo codice sostituirebbe? Le sue trace possono convivere con Langfuse?
-- [ ] 16.7 **Claude Platform on AWS.** Provare la stessa pipeline sull'accesso gestito da Anthropic in AWS (parità con l'API Anthropic: funzioni come compaction lato server, context editing, batch). Confronto onesto con Bedrock su funzionalità, prezzo, residenza dei dati.
-- [ ] 16.8 **Batch inference.** Per `PROFILE_UPDATE` e per gli eval, il batch di Bedrock costa meno ma è asincrono: quando conviene?
-- [ ] 16.9 **Fine-tuning e distillazione vs prompting.** Quando un classificatore fine-tuned piccolo batte un prompt su un modello grande (`SAFETY` è un candidato). Bedrock offre customizzazione per alcuni modelli; valuta costo e manutenzione. I dataset Langfuse annotati sono il punto di partenza per il training set.
-- [ ] 16.10 **Migrazione a un nuovo modello.** Checklist: capacità (contract test), esperimenti completi confrontati in Langfuse con l'ultimo run buono, audit dei prompt per "incrostazioni" scritte per modelli vecchi, ricalibrazione di `effort`, costi, canary in produzione con score online, rollback pronto.
-- [ ] 16.11 **Ottimizzazione dei costi come processo.** Ordine dei livelli: cache, igiene dei token in ingresso (contesto, tool result), igiene dell'output, batch, poi `effort`, poi cambio modello. Misura sempre il costo per **task completato**, che in Langfuse è il costo per trace, non per generation.
-- [ ] 16.12 **Multimodale e voce.** Immagini in ingresso (Converse supporta blocchi immagine e documento), trascrizione e sintesi vocale come step della pipeline.
+**Goal.** A test pyramid that protects the harness (deterministic) and the model integration (non-deterministic) with different tools at different cadences, using Langfuse as the record of regression experiment results.
+
+**Why it matters.** Models change under your feet (new versions, provider behaviour changes), prompts change by your hand (and now also from a web interface), and the harness changes through refactoring. You need different nets.
+
+### Steps
+
+- [ ] 12.1 💡 **Level 1: harness unit tests (per pull request, no network).** Everything that is pure logic: prompt rendering, structured output parsing, the token-budgeted window, compact view rules, router decisions, the tool loop, `PromptStore` fallback. Use `FakeLlmClient` and a `FakePromptStore`. There should be hundreds of them and they should run in seconds with `cargo nextest`.
+- [ ] 12.2 💡 🔭 **Prompt snapshot tests.** With `insta`, a snapshot of the **rendered** prompt for each step with fixed inputs, built from the `prompts/` snapshots downloaded from Langfuse (6.5). If someone moves the `production` label in Langfuse, the next `just prompts-pull` changes the file, the snapshot fails, and the change appears in a pull request diff: that is your review gate on prompts edited from the interface.
+- [ ] 12.3 💡 **Level 2: Bedrock adapter tests (per pull request, no network).** With `aws-smithy-mocks` (or the SDK's `StaticReplayClient`) you simulate service responses and verify type mapping, streaming event handling, error classification (throttling, validation, access denied) and retry behaviour. Record real responses once and use them as fixtures. Same approach for the Langfuse client with `wiremock`.
+- [ ] 12.4 💡 **Level 3: contract tests against the real services (nightly, `#[ignore]`).** A handful of tests, one per capability declared in the `ModelRegistry`: the model answers; it supports tools; it supports structured output; cache reads work; streaming emits the expected events; a small `max_tokens` produces `stop_reason = max_tokens`. Plus two for Langfuse: a trace sent over OTel appears through the API within N seconds, and a `production` prompt downloads. They run with `cargo nextest run --run-ignored ignored-only` and credentials supplied by CI through OIDC (never static access keys in secrets).
+- [ ] 12.5 💡 🔭 **Level 4: regression experiments (nightly, or on prompt and model changes).** The nightly job runs the Module 11 runner over the regression datasets, then reads the run's scores through the API and compares them against **thresholds**: `safety.false_negative_rate ≤ 2%`, `generation.schema_valid ≥ 99%`, `generation.grounded ≥ 95%`, average cost per message ≤ X. The threshold must sit **above** the estimated noise, otherwise the test is a false-alarm generator. Failure means a red build, with a link to the Langfuse run in the message. A Langfuse **alert** on the run's average score (Module 14) is the second net.
+- [ ] 12.6 💡 **Non-determinism.** In level 3 and 4 tests never assert on exact text: assert properties (valid schema, field present, value within a set), over several repetitions, above a threshold. Mark the tests prone to flakiness and track their failure rate: if it rises, that is a signal, not an annoyance.
+- [ ] 12.7 💡 **Pinning and canaries.** Pin model versions where the provider allows it; when a new version arrives, run the full level 3 and 4 suite against it **before** changing the registry (that is your canary): in Langfuse the new run is compared against the last good one. Document the migration in an ADR.
+- [ ] 12.8 Property-based tests with `proptest` for the hostile functions: the budgeted window with randomly sized turns, the structured output parser with almost-valid JSON, approximate tokenization.
+- [ ] 12.9 Security as regression: an `injection-v1` dataset of prompt injection attempts that **must not** change `GENERATION` behaviour or bypass `SAFETY` (Module 13). It is a Langfuse dataset like any other.
+- [ ] 12.10 Wire it all into CI: `ci.yml` runs levels 1–2; `nightly.yml` runs 3–4 and publishes the report with links to the runs; a badge in the README.
+
+**Done when** a prompt change in Langfuse makes a snapshot fail in a pull request after the pull; a throttling mock is handled correctly; the nightly job runs against the real services, produces Langfuse dataset runs and compares them against thresholds.
+
+**Self-check.** Why is a level 4 test with a 95% threshold over 20 cases and one repetition a useless test? What protects you from someone moving `production` onto an untested prompt?
 
 ---
 
-## Appendice A · Glossario (da compilare con parole tue)
+## Module 13 · Security, privacy and guardrails
 
-| Termine | La tua definizione |
+⏱ 6–8 hours.
+
+**Goal.** Layered defences against hostile input, data leakage and out-of-scope behaviour; baseline compliance for healthcare data in the EU, including the data that ends up in Langfuse.
+
+**Why it matters.** An agentic application has a new attack surface: user input and retrieved documents are text the model might read as instructions. In healthcare a mistake is real harm. And an observability tool, by its nature, **copies** data: it must be governed like the system it observes.
+
+### Steps
+
+- [ ] 13.1 📚 Read the *OWASP Top 10 for LLM Applications*. For each of the ten entries, write whether and how it touches the guiding project.
+- [ ] 13.2 💡 **Prompt injection.** Defences: clear delimitation of data (XML tags), system prompt instructions to treat that content as data, least privilege for tools (a tool cannot do more than it needs to), human confirmation for irreversible actions, output validation before execution or display. No defence is complete: hence the layers and the regression dataset (12.9).
+- [ ] 13.3 💡 **Bedrock Guardrails.** Create a guardrail with content filters, denied topics (for example "diagnosis"), a PII filter with masking, and a grounding check (is the output supported by the source?). Apply it with `ApplyGuardrail` to input and output as a layer **on top of** your own LLM `GUARDRAILS`. Compare: what does one catch that the other does not? What cost and latency does it add? 🔭 The outcome is one more score on the trace (`bedrock_guardrail_action`).
+- [ ] 13.4 💡 🔭 **Personal data in prompts and in traces.** Minimize what enters the prompt; pseudonymize identifiers (the `user.id` in Langfuse must never be a real identifier); apply **PII redaction before export** in traces (the function from 5.10: names, phone numbers, emails, national identifiers; for free text consider a small model or the Bedrock Guardrails PII API); set **retention** per Langfuse project; document the data flow (who sees what, in which region). Bedrock does not use your data to train models and does not retain it beyond the request, except for logging you enable yourself: revisit the choice from 3.9.
+- [ ] 13.5 💡 🔭 **Data residency.** Only `eu.*` inference profiles; no feature that routes outside the EU; Langfuse Cloud EU region or self-hosted in the EU (Module 15); verify where logs, traces, datasets and exports end up. Write it all in an ADR: it will be the basis of the legal review.
+- [ ] 13.6 💡 **Least-privilege IAM.** Replace `AmazonBedrockFullAccess` with a policy scoped to the ARNs of the inference profiles you use; separate roles for the app, CI and the evaluation runner; no static access keys in production (IAM roles for ECS/Lambda, OIDC for GitHub Actions).
+- [ ] 13.7 💡 🔭 **Secrets and Langfuse access.** Langfuse API keys in Secrets Manager, separate for the app, CI and the runner; in Langfuse, members with minimal roles (who can move `production` on prompts, who can see traces with content); the `production` label **protected**.
+- [ ] 13.8 💡 **Abuse and cost.** Per-user rate limiting (`governor` in axum), a maximum message length, a cost ceiling per session and per day, alerts on anomalies (one user generating 30% of the cost: the Langfuse *Users* view shows it).
+- [ ] 13.9 💡 **Output to the user.** Escalation replies are fixed (9.4). Generated replies pass through `GUARDRAILS`, through Bedrock Guardrails and through programmatic validation (length, language, no URLs outside an allowlist).
+- [ ] 13.10 ADR: threat model, controls per layer, what remains uncovered and why.
+
+**Done when** the injection dataset passes, Bedrock Guardrails is integrated and measured, IAM is least-privilege, `prod` traces are redacted, retention is configured, and the data ADR is written.
+
+**Self-check.** Why is "I tell the prompt to ignore instructions found in documents" not enough as a defence? Why must your observability tool be treated as a system that processes personal data?
+
+---
+
+## Module 14 · Production observability with Langfuse
+
+⏱ 8–10 hours.
+
+**Goal.** Langfuse as the operations centre: every request is a trace with a span per step; dashboards and alerts on the metrics that matter; **online** evaluation with managed judges over a sample of traffic; user feedback as scores; annotation queues for human review; correlation with the rest of the infrastructure.
+
+**Why it matters.** In production you cannot read every conversation. You need to know what it costs, how slow it is, how often guardrails fire, when a model changes behaviour, and be able to reconstruct one problematic conversation in minutes.
+
+### Steps
+
+- [ ] 14.1 💡 **What to observe.** Per request: `trace_id`, `session_id`, pseudonymized `user_id`, step, chosen model and reason, prompt name and version, input/output/cache tokens, cost, latency (time to first token and total), `stop_reason`, guardrail outcome, classified errors, tools called with their duration. Aggregates: cost per day and per role, p50/p95 latency per step, error rate per model, guardrail failure rate, router fallback rate, cache hit rate, model distribution, online quality scores. Almost all of it is already in the traces from Modules 5–10; here you make it legible.
+- [ ] 14.2 🔭 **Environments and releases.** Every trace carries `environment` (`prod`, `staging`) and `release` (the app version or commit). Every chart then filters by environment, and every metric change lines up with a deployment.
+- [ ] 14.3 🔭 **Dashboards.** Under *Dashboards*, build a "Pipeline" dashboard with: daily cost per router role; p95 latency per step (filtered on span name); trace count by `escalation:*` tag; `guardrail_pass` rate (the average of a boolean score is the percentage of true values); fallback rate (metadata `router.reason` starting with `fallback`); cache reads as a share of total input; generation distribution per model. Add the **Pulse** view on the observations table to spot cost and latency outliers.
+- [ ] 14.4 🔭 **Alerts.** In Langfuse create threshold alerts with Slack or webhook notification on: average `guardrail_pass` below threshold over the last hour (a sudden jump often means the provider changed the model, or someone moved `production` onto a different prompt); daily cost above budget; `GENERATION` p95 above threshold; error rate per model. Link evaluator alerts (14.6) directly from the evaluator page.
+- [ ] 14.5 🔭 **Reconciled costs.** The cost Langfuse computes (from tokens and the prices in 5.4) should be compared monthly against the AWS bill filtered by the tag from 3.8 and by **Application Inference Profile** (create one application profile per environment: Cost Explorer then shows cost per profile). If they do not match within 5%, a price or a model id in the registry is wrong.
+- [ ] 14.6 🔭 **Online evaluation.** The LLM-as-a-judge evaluators from Module 11 also run in production: configure them with a filter (`environment = prod`, sampling at say 5%, excluding irrelevant steps) so Langfuse assigns `no_diagnosis` and `grounded_in_kb` to a sample of real traffic. The judge's cost is measurable and must be kept in check through sampling. Also add **code-based** evaluators (for example: the reply cites only knowledge base ids that exist) where a model is not needed.
+- [ ] 14.7 🔭 **User feedback.** The client sends thumbs up or down (and an optional comment) with the `trace_id` returned in 9.7; the app writes it as a `user_feedback` score on the trace through the API. In Langfuse, filter traces with negative feedback: they are the primary source of new dataset items (11.15).
+- [ ] 14.8 🔭 **Continuous human review.** An annotation queue, "weekly clinical review", fed automatically with traces where `guardrail_pass = false`, where feedback is negative, or where the judge's score is below threshold. A person labels them; comparing human labels against the judge keeps the judge calibrated over time (11.7).
+- [ ] 14.9 💡 **Drift.** Weekly, compare online scores and distributions (reply length, escalation rate, cost per message) against the previous release's baseline: a change with no deployment of your own is almost always a change in the model or in a prompt. Comparing dataset runs (12.7) confirms or refutes it.
+- [ ] 14.10 💡 **The rest of the infrastructure.** Langfuse specializes in the LLM; CPU, memory, databases, queues and HTTP latency live elsewhere (in this company: Datadog). Two ways to correlate: (a) use the **OpenTelemetry Collector** as a fan-out, with the app sending traces to the collector and the collector forwarding to both Langfuse and Datadog (the same traces, with identical `trace_id`, in two places); (b) export aggregate metrics from Langfuse through the **Metrics API** into the existing monitoring system. Try (a): it is the pattern that lets you change backends without touching the app.
+- [ ] 14.11 💡 🔭 **Langfuse volume and cost.** Estimate traces per month and observations per trace; check the Cloud plan's limits or size the self-hosted deployment; set retention; use **batch export** (to S3) for historical offline analysis.
+- [ ] 14.12 Write a short runbook: "latency is rising" → what to look at in Langfuse and Datadog; "guardrails fire more often" → compare prompt version and model over the last hours; "cost has doubled" → cost-per-role dashboard, then *Users*; "the online score is dropping" → last regression run, last deployment, last label move.
+- [ ] 14.13 🧪 Try debugging one conversation: from a `trace_id`, reconstruct every step, the exact prompts (with versions, clickable from the generation), the router's decisions and the cost. If you cannot do it in five minutes, something is missing from the instrumentation.
+
+**Done when** a "Pipeline" dashboard exists with active alerts, an online evaluator runs on a sample of `prod`, user feedback arrives as scores, an annotation queue fills itself, and the runbook is written.
+
+**Self-check.** Why is the `guardrail_pass` rate an excellent canary for silent provider changes? Why is sampling essential for online evaluation?
+
+**Going deeper.** Langfuse docs: *Evaluation* (evaluators on live traffic), *Dashboards*, *Alerts*, *Annotation Queues*, *Metrics API*, *Public API*.
+
+---
+
+## Module 15 · Deploying to production
+
+⏱ 8–12 hours.
+
+**Goal.** The application running on AWS with IAM roles rather than keys, per-environment configuration, working streaming, gradual rollout, cost controls; plus a reasoned decision about where Langfuse runs.
+
+**Why it matters.** Many of the choices made so far (streaming, timeouts, caching, quotas, trace volume) can only be measured with a real deployment and some load.
+
+### Steps
+
+- [ ] 15.1 **Packaging.** A multi-stage Dockerfile for Rust (build in a toolchain image, run on `distroless` or `debian-slim`), an optimized binary (`--release`, LTO), a small image. Vulnerability scanning (`cargo deny`, an image scanner).
+- [ ] 15.2 💡 **Twelve-factor configuration.** Everything from environment variables or Parameter Store: region, model ids per role, context budgets, router thresholds, Langfuse host and keys, tracing policy (content, sampling). No `if env == prod` in the code.
+- [ ] 15.3 💡 **Where to run the app.** Evaluate three options and choose with an ADR: **ECS Fargate** (an always-on HTTP service, natural SSE streaming, the sensible default); **AWS Lambda** with `cargo-lambda` (great for spiky load; ⚠️ response streaming, timeouts and **flushing OTel traces** before the invocation ends all need verification); **Bedrock AgentCore Runtime** (a managed environment for agents, with a Gateway for tools, Memory, Policy with Guardrails and built-in Observability: useful for seeing what a managed runtime buys you).
+- [ ] 15.4 💡 🔭 **Where to run Langfuse.** Two options, ADR required:
+  - **Langfuse Cloud, EU region**: no operations, data in Ireland, compliance documented by the vendor; to be reviewed with legal as a sub-processor.
+  - **Self-hosted on AWS EU**: `web` and `worker` on ECS, PostgreSQL on RDS, ClickHouse (self-managed on EC2/EKS, or ClickHouse Cloud in an EU region), Redis on ElastiCache, S3 for blobs and exports. Maximum control over the data, but upgrades, backups and capacity are yours.
+  🧪 Do the **local** self-host with Docker Compose at least once, to touch the components and understand what running them involves.
+- [ ] 15.5 **Identity.** An IAM role for the task or function with the least-privilege policy from Module 13. No credentials in the image. Langfuse keys from Secrets Manager.
+- [ ] 15.6 **The server.** `axum` with health checks (`/healthz`, `/readyz`), graceful shutdown (finish in-flight requests, cancel background tasks sensibly, **flush the OTel exporter**), a per-request timeout, body size limits, per-user rate limiting, and CORS if needed.
+- [ ] 15.7 **State.** SQLite is not enough for a multi-instance production: managed PostgreSQL (RDS) with `pgvector` for the knowledge base. Versioned migrations (`sqlx migrate`).
+- [ ] 15.8 💡 🔭 **Gradual rollout.** For the app: two versions in parallel (blue/green, or a canary on 5% of traffic). For prompts: the active version is the `production` label in Langfuse, so a prompt rollback is a label move with no deployment; a `canary` label read by 5% of requests lets you try a new prompt on real traffic, with online scores (14.6) filtered by prompt version telling you whether to promote it. Keep the prompt cache short enough (5–10 minutes) for rollback to be fast.
+- [ ] 15.9 💡 **Cost controls.** Budgets and alerts are already active (3.8, 14.4); add an emergency kill switch that degrades the service (escalation and fixed replies only) if hourly cost crosses a threshold.
+- [ ] 15.10 🧪 **Load testing.** With `k6` or `oha`, 20–50 simulated users sending synthetic messages. Watch for: Bedrock throttling (the quotas from 3.7), p95 per step in Langfuse, router behaviour under stress, cost per minute, trace ingestion lag. Tune quotas, timeouts, the circuit breaker and the exporter's batch size.
+- [ ] 15.11 Deployment pipeline: build on tag, push to ECR, deploy to ECS with manual approval for production; the Module 12 nightly must be green before promotion.
+- [ ] 15.12 Operational runbook: how to roll back the app and a prompt, how to switch models in an emergency (the router override), how to turn off content tracing, who to call.
+
+**Done when** the app answers in production with streaming, traces arrive in Langfuse with `environment = prod`, alerts are active, and you have rolled back a prompt at least once by moving a label.
+
+**Self-check.** Why must the active prompt version be a label rather than code? What are the hidden costs of self-hosting Langfuse?
+
+---
+
+## Module 16 · Optional deep dives
+
+To explore once the core is solid. Each one is a small experiment with a card in the Work Log.
+
+- [ ] 16.1 **Agent frameworks compared.** Reimplement the Module 7 agent with **Rig** (`rig-core` + `rig-bedrock`, the most mature Rust framework, with typed tools, RAG, MCP and OpenTelemetry attributes built in). Compare lines of code, control over the loop, testability, and observability in Langfuse. To see what a "complete" framework does, also look at the concepts in LangChain 1.x (Python: `create_agent`, middleware, LangGraph) without switching stacks: your harness **is** an agent with hand-written middleware. ADR: "framework versus hand-written harness".
+- [ ] 16.2 **Multi-agent (orchestrator-workers).** An orchestrator delegates sub-tasks to workers using a cheap model and isolated context, then synthesizes. In Langfuse the trace shows the whole tree. Compare against the single-model pipeline on a knowledge base research task with several questions.
+- [ ] 16.3 **Tool search and on-demand loading.** With dozens of tools the list itself costs: techniques for exposing only the tools relevant to a turn (a local index, short descriptions with the full schema on request).
+- [ ] 16.4 **Memory as a tool.** Give the model a `memory_read/write` tool over a directory or table and let it decide what to remember; compare with the structured profile from Module 8.
+- [ ] 16.5 **Langfuse in more depth.** Composed prompts (a prompt that includes others, to reuse shared rules between `GENERATION` and `GUARDRAILS`); webhooks on prompt changes to trigger the nightly when someone moves `production`; **session-level** scores (the quality of a whole conversation rather than a single message); multimodal traces; batch export to S3 and offline analysis with DuckDB.
+- [ ] 16.6 **Bedrock AgentCore in depth.** Runtime, Gateway (tools over MCP with authentication), Memory, Policy with Guardrails, Observability. How much of your code would it replace? Can its traces coexist with Langfuse?
+- [ ] 16.7 **Claude Platform on AWS.** Run the same pipeline on Anthropic's managed access inside AWS (parity with the Anthropic API: server-side compaction, context editing, batch). An honest comparison with Bedrock on features, price and data residency.
+- [ ] 16.8 **Batch inference.** For `PROFILE_UPDATE` and for evaluations, Bedrock's batch mode is cheaper but asynchronous: when is it worth it?
+- [ ] 16.9 **Fine-tuning and distillation versus prompting.** When a small fine-tuned classifier beats a prompt on a large model (`SAFETY` is a candidate). Bedrock offers customization for some models; weigh cost and maintenance. Annotated Langfuse datasets are the starting point for the training set.
+- [ ] 16.10 **Migrating to a new model.** Checklist: capabilities (contract tests), full experiments compared in Langfuse against the last good run, a prompt audit for cruft written for older models, recalibrating `effort`, costs, a production canary with online scores, a rollback ready.
+- [ ] 16.11 **Cost optimization as a process.** The order of the levers: caching, input token hygiene (context, tool results), output hygiene, batch, then `effort`, then changing model. Always measure cost per **completed task**, which in Langfuse is cost per trace, not per generation.
+- [ ] 16.12 **Multimodal and voice.** Image input (Converse supports image and document blocks), transcription and speech synthesis as pipeline steps.
+
+---
+
+## Appendix A · Glossary (fill in with your own words)
+
+| Term | Your definition |
 |---|---|
 | Token | |
 | Context window | |
 | System prompt | |
 | Tool use / function calling | |
 | Harness | |
-| Agente vs workflow | |
+| Agent versus workflow | |
 | Structured output | |
-| Streaming / time-to-first-token | |
-| Prompt caching / prefisso stabile | |
-| Thinking adattivo / effort | |
+| Streaming / time to first token | |
+| Prompt caching / stable prefix | |
+| Adaptive thinking / effort | |
 | Inference profile (cross-region) | |
 | Converse API | |
-| Guardrail (LLM vs gestito) | |
+| Guardrail (LLM versus managed) | |
 | RAG / embedding / recall@k | |
 | Trace / observation / generation | |
 | Session / user (Langfuse) | |
-| Score (numerico, categorico, booleano) | |
+| Score (numeric, categorical, boolean) | |
 | Prompt version / label | |
 | Dataset / dataset run / evaluator / annotation queue | |
 | LLM-as-a-judge | |
-| Intervallo di confidenza / rumore dell'eval | |
+| Confidence interval / evaluation noise | |
 | Router / fallback / circuit breaker | |
-| OpenTelemetry / OTLP / GenAI semconv | |
+| OpenTelemetry / OTLP / GenAI semantic conventions | |
 | MCP | |
 | ADR | |
 
 ---
 
-## Appendice B · Risorse
+## Appendix B · Resources
 
-**Concetti e prompting (Anthropic)**
+**Concepts and prompting (Anthropic)**
 - Building effective agents: https://www.anthropic.com/engineering/building-effective-agents
 - Effective context engineering for AI agents: https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
 - Writing effective tools for agents: https://www.anthropic.com/engineering/writing-tools-for-agents
-- Documentazione Claude (prompt engineering, structured outputs, tool use, note per Claude 5): https://platform.claude.com/docs
+- Claude documentation (prompt engineering, structured outputs, tool use, Claude 5 notes): https://platform.claude.com/docs
 
 **Amazon Bedrock**
-- Guida utente: https://docs.aws.amazon.com/bedrock/latest/userguide/
-- Accesso ai modelli: https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html
+- User guide: https://docs.aws.amazon.com/bedrock/latest/userguide/
+- Model access: https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html
 - Converse API: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
 - Structured output: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-- Parametri Claude su Bedrock: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
+- Claude parameters on Bedrock: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
 - Guardrails: https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
 - Intelligent Prompt Routing: https://aws.amazon.com/bedrock/intelligent-prompt-routing/
 - AgentCore: https://aws.amazon.com/bedrock/agentcore/
-- Prezzi: https://aws.amazon.com/bedrock/pricing/
+- Pricing: https://aws.amazon.com/bedrock/pricing/
 
 **Langfuse**
-- Documentazione: https://langfuse.com/docs
-- Modello dati dell'osservabilità: https://langfuse.com/docs/observability/data-model
-- Integrazione OpenTelemetry (endpoint, attributi): https://langfuse.com/integrations/native/opentelemetry
-- Prompt management (concetti, versioni e label, caching, disponibilità garantita, collegamento alle trace): https://langfuse.com/docs/prompt-management/data-model
-- Evaluation (concetti, dataset, esperimenti, evaluator, annotation queue): https://langfuse.com/docs/evaluation/overview
-- API pubblica: https://langfuse.com/docs/api-and-data-platform/features/public-api
-- Self-hosting (architettura v3, Docker Compose, Helm): https://langfuse.com/self-hosting
-- Regioni dati e residenza in UE: https://langfuse.com/security/data-regions e https://langfuse.com/resources/engineering/langfuse-eu-data-residency-gdpr
-- Changelog (le funzioni cambiano spesso): https://langfuse.com/changelog
-- Crate Rust: `opentelemetry-langfuse`, `langfuse-ergonomic`, `langfuse-client-base` (organizzazione genai-rs su GitHub)
+- Documentation: https://langfuse.com/docs
+- Observability data model: https://langfuse.com/docs/observability/data-model
+- OpenTelemetry integration (endpoint, attributes): https://langfuse.com/integrations/native/opentelemetry
+- Prompt management (concepts, versions and labels, caching, guaranteed availability, linking to traces): https://langfuse.com/docs/prompt-management/data-model
+- Evaluation (concepts, datasets, experiments, evaluators, annotation queues): https://langfuse.com/docs/evaluation/overview
+- Public API: https://langfuse.com/docs/api-and-data-platform/features/public-api
+- Self-hosting (v3 architecture, Docker Compose, Helm): https://langfuse.com/self-hosting
+- Data regions and EU residency: https://langfuse.com/security/data-regions and https://langfuse.com/resources/engineering/langfuse-eu-data-residency-gdpr
+- Changelog (features move fast): https://langfuse.com/changelog
+- Rust crates: `opentelemetry-langfuse`, `langfuse-ergonomic`, `langfuse-client-base` (the genai-rs organization on GitHub)
 
 **Rust**
-- Esempi Bedrock Runtime per Rust: https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_bedrock-runtime_code_examples.html
-- Test con l'SDK (mock e replay): https://docs.aws.amazon.com/sdk-for-rust/latest/dg/testing.html
-- `aws-sdk-bedrockruntime` su docs.rs: https://docs.rs/aws-sdk-bedrockruntime
-- SDK MCP ufficiale (`rmcp`): https://github.com/modelcontextprotocol/rust-sdk
-- Rig (confronto opzionale): https://github.com/0xPlaygrounds/rig e crate `rig-bedrock`
-- `schemars`, `insta`, `proptest`, `wiremock`, `aws-smithy-mocks`, `tracing-opentelemetry`, `opentelemetry-otlp` su crates.io
+- Bedrock Runtime examples for Rust: https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_bedrock-runtime_code_examples.html
+- Testing with the SDK (mocks and replay): https://docs.aws.amazon.com/sdk-for-rust/latest/dg/testing.html
+- `aws-sdk-bedrockruntime` on docs.rs: https://docs.rs/aws-sdk-bedrockruntime
+- Official MCP SDK (`rmcp`): https://github.com/modelcontextprotocol/rust-sdk
+- Rig (optional comparison): https://github.com/0xPlaygrounds/rig and the `rig-bedrock` crate
+- `schemars`, `insta`, `proptest`, `wiremock`, `aws-smithy-mocks`, `tracing-opentelemetry`, `opentelemetry-otlp` on crates.io
 
-**Osservabilità e sicurezza**
+**Observability and security**
 - OpenTelemetry GenAI semantic conventions: https://opentelemetry.io/docs/specs/semconv/gen-ai/
 - OpenTelemetry Collector: https://opentelemetry.io/docs/collector/
-- Datadog LLM Observability (per la correlazione con l'infrastruttura): https://docs.datadoghq.com/llm_observability/
+- Datadog LLM Observability (for correlation with infrastructure): https://docs.datadoghq.com/llm_observability/
 - OWASP Top 10 for LLM Applications: https://genai.owasp.org/
 
 ---
 
-## Appendice C · Template ADR
+## Appendix C · ADR template
 
-File: `docs/adr/NNNN-titolo-breve.md`
+File: `docs/adr/NNNN-short-title.md`. The full template lives in `docs/adr/0000-template.md`:
 
 ```markdown
-# NNNN · Titolo
+# NNNN · Title
 
-- Data: AAAA-MM-GG
-- Stato: proposto | accettato | superato da NNNN
+- Date: YYYY-MM-DD
+- Status: proposed | accepted | superseded by NNNN
 
-## Contesto
-Qual è il problema, quali vincoli (costo, latenza, privacy, tempo).
+## Context
+What the problem is, and what the constraints are (cost, latency, privacy, time).
 
-## Opzioni considerate
+## Options considered
 1. …  2. …  3. …
 
-## Decisione
-Cosa scegliamo e perché, con i numeri quando ci sono (link al dataset run in Langfuse e alla scheda esperimento).
+## Decision
+What we choose and why, with numbers where they exist (link to the Langfuse dataset run
+and to the experiment card).
 
-## Conseguenze
-Cosa diventa più facile, cosa più difficile, cosa va rivisto e quando.
+## Consequences
+What becomes easier, what becomes harder, what must be revisited and when.
 ```
 
 ---
 
-## Appendice D · Scheda esperimento
+## Appendix D · Experiment card
 
-Da compilare nel Diario per ogni 🧪.
+Fill one in the Work Log for every 🧪.
 
 ```markdown
-### EXP-NNN · Titolo · AAAA-MM-GG
-- Domanda: …
-- Variabile cambiata (una sola): …
-- Configurazione: modello, prompt@versione, effort, dataset@versione, ripetizioni
-- Dataset run in Langfuse: <link>
-- Risultati: qualità (con IC), costo totale, p50/p95 latenza, errori infra
-- Conclusione: …
-- Prossimo passo: …
+### EXP-NNN · Title · YYYY-MM-DD
+- Question: …
+- Variable changed (exactly one): …
+- Configuration: model, prompt@version, effort, dataset@version, repetitions
+- Langfuse dataset run: <link>
+- Results: quality (with CI), total cost, p50/p95 latency, infrastructure errors
+- Conclusion: …
+- Next step: …
 ```
 
 ---
 
-## Appendice E · Diario di bordo
+## Appendix E · Work log
 
-Aggiungi in coda, una voce per sessione di lavoro. Poche righe: cosa hai fatto, cosa hai imparato, cosa non ti è chiaro.
+Append one entry per working session. A few lines: what you did, what you learned, what is still unclear.
 
 ```markdown
-### AAAA-MM-GG
-- Fatto: …
-- Imparato: …
-- Dubbi aperti: …
+### YYYY-MM-DD
+- Did: …
+- Learned: …
+- Open questions: …
 ```
