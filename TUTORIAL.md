@@ -87,8 +87,8 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 - [ ] 1.5 💡 **Tool calling (function calling).** The model executes nothing: it emits a `tool_use` block with a name and JSON arguments, you run the function and send back a `tool_result` block. The loop `call → tool_use → execute → tool_result → call…` **is the harness**. An "agent" is a harness in which the model decides which tools to use and when to stop.
 - [ ] 1.6 💡 **Structured output.** Asking the model to answer with JSON that conforms to a schema. There are two ways: force a tool whose schema is the one you want, or use the native structured output feature (on Bedrock: `outputConfig.textFormat` with `json_schema`). You need it everywhere in the guiding project.
 - [ ] 1.7 💡 **Streaming.** Receiving tokens as they are produced instead of all at the end. It changes perceived latency (time to first token) and complicates the code (partial events, tool use arriving in pieces).
-- [ ] 1.8 📚 **Workflows versus agents.** Read *Building effective agents* (Anthropic). Learn the distinction: a **workflow** is where your code decides the flow and the LLM handles individual steps; an **agent** is where the LLM decides the flow. The guiding project is a workflow with agentic parts, which is the right shape for most products.
-- [ ] 1.9 📚 **The five composition patterns.** Prompt chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer. For each one write a line in the Work Log: "in the guiding project I would use this for…". (Hint: `SAFETY` is routing, `GUARDRAILS` is evaluator-optimizer.)
+- [ ] 1.8 📚 **Workflows versus agents.** Read [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) (Anthropic). Learn the distinction: a **workflow** is where your code decides the flow and the LLM handles individual steps; an **agent** is where the LLM decides the flow. The guiding project is a workflow with agentic parts, which is the right shape for most products.
+- [ ] 1.9 📚 **The five composition patterns.** Prompt chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer, all described in [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents). For each one write a line in the Work Log: "in the guiding project I would use this for…". (Hint: `SAFETY` is routing, `GUARDRAILS` is evaluator-optimizer.)
 - [ ] 1.10 💡 **When you do NOT need an agent.** Four questions: is the task multi-step and hard to specify up front? Does the value justify the extra cost and latency? Is the model capable at this kind of task? Are errors recoverable? If any answer is no, stay with a single call or a workflow.
 - [ ] 1.11 💡 **Non-determinism.** Even at `temperature = 0`, two identical calls can produce different output. This changes everything about testing (Module 12): you do not test "the output is X", you test "the output satisfies properties P, over N repetitions, above a threshold".
 - [ ] 1.12 💡 **Observing an LLM system.** Three words we will use constantly: **trace** (everything that happens for one request), **observation** (a piece of a trace: a generic span, a *generation* meaning a model call, an event), **score** (a number or a label attached to a trace or an observation: quality, feedback, guardrail outcome). This is the Langfuse data model, and roughly the industry's.
@@ -98,7 +98,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 **Self-check.** Explain out loud, in two minutes, why "the LLM remembers the conversation" is false, and what your code actually does to create that illusion.
 
-**Going deeper.** *Effective context engineering for AI agents* and *Writing effective tools for agents* (Anthropic Engineering): we return to both in Modules 7 and 8.
+**Going deeper.** [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) and [Writing effective tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents) (Anthropic Engineering): we return to both in Modules 7 and 8.
 
 ---
 
@@ -184,7 +184,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
   ```
 
   Look at the response: `output.message.content`, `stopReason`, `usage.inputTokens`, `usage.outputTokens`, `metrics.latencyMs`. Record the tokens and the latency in the Work Log: that is your first measurement.
-- [ ] 3.11 📚 **Pricing.** Read the Bedrock pricing page for your chosen models. Work out by hand what the call you just made cost. Learn the difference between input tokens, output tokens, **cache writes** and **cache reads** (cache reads cost roughly 10% of normal input). You will enter these prices into Langfuse in Module 5.
+- [ ] 3.11 📚 **Pricing.** Read the [Bedrock pricing page](https://aws.amazon.com/bedrock/pricing/) for your chosen models. Work out by hand what the call you just made cost. Learn the difference between input tokens, output tokens, **cache writes** and **cache reads** (cache reads cost roughly 10% of normal input). You will enter these prices into Langfuse in Module 5.
 - [ ] 3.12 💡 **A note on "Claude Platform on AWS".** Since 2026 Anthropic also offers access operated directly by Anthropic inside AWS (SigV4 authentication, Marketplace billing) with feature parity with the Anthropic API and unprefixed model ids. It is an alternative to Bedrock, not the same thing: Bedrock is operated by AWS and has its own multi-vendor catalogue, Guardrails, Knowledge Bases and AgentCore. This tutorial stays on Bedrock because the point is to learn the provider; we come back to it in Module 16.
 
 **Done when** the call in 3.10 answers, the budget is active, and `.env` holds two valid EU-region model ids.
@@ -230,7 +230,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
   let client = aws_sdk_bedrockruntime::Client::new(&cfg);
   ```
 
-- [ ] 4.3 Implement `complete` with `client.converse()`: `model_id`, `system(SystemContentBlock::Text(..))`, `messages(..)`, `inference_config(InferenceConfiguration::builder().max_tokens(..))`. Map the response: `output()` → `ConverseOutput::Message`, `stop_reason()`, `usage()`, `metrics().latency_ms()`. 📚 Check docs.rs for `aws_sdk_bedrockruntime` for the exact names: the SDK's builders change between versions.
+- [ ] 4.3 Implement `complete` with `client.converse()`: `model_id`, `system(SystemContentBlock::Text(..))`, `messages(..)`, `inference_config(InferenceConfiguration::builder().max_tokens(..))`. Map the response: `output()` → `ConverseOutput::Message`, `stop_reason()`, `usage()`, `metrics().latency_ms()`. 📚 Check [`aws_sdk_bedrockruntime` on docs.rs](https://docs.rs/aws-sdk-bedrockruntime) for the exact names: the SDK's builders change between versions.
 - [ ] 4.4 **Errors.** Map the service exceptions to an `LlmError` whose variants matter to the caller: `Throttled` (retryable), `ModelNotReady`/`ServiceUnavailable` (retryable), `ValidationError` (your bug, do not retry), `AccessDenied` (configuration), `ContextTooLong`, `Other`. 💡 The SDK already retries with exponential backoff and jitter: configure it (`RetryConfig`) instead of rewriting it; the router (Module 10) will only add cross-model fallback.
 - [ ] 4.5 **Streaming.** Implement `stream` with `converse_stream()`: you receive `ConverseStreamOutput` with `MessageStart`, `ContentBlockStart`, `ContentBlockDelta` (text or fragments of the tool's JSON), `ContentBlockStop`, `MessageStop` and `Metadata` (usage) events. Translate them into your own `LlmEvent`. ⚠️ Tool arguments arrive as a JSON string in pieces: accumulate them and parse only at `ContentBlockStop`.
 - [ ] 4.6 **Model-specific parameters.** Converse splits parameters in two. `inferenceConfig` holds the fields every model shares (`maxTokens`, `temperature`, `topP`, `stopSequences`); anything vendor-specific goes in `additional_model_request_fields` (a `Document`). For Claude, `thinking` and `output_config.effort` travel there, among others. Wire `LlmRequest.extra` into that field. ⚠️ Models do not accept the same parameters (see 1.4): Claude 5 rejects `temperature`, Claude Haiku 4.5 rejects `effort`. Start with a small capability table in `llm-bedrock`, keyed by model family, that drops any parameter the target model does not accept, logs a warning, and records the parameters actually sent on the call's span (4.10), so that an experiment never believes it changed a variable that was dropped. In Module 10 this table moves into the `ModelRegistry`.
@@ -244,7 +244,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 **Self-check.** Why must tool arguments be parsed only at the end of the block when streaming? Which errors are retryable and which are not?
 
-**Going deeper.** The official Bedrock Runtime examples for Rust in the *AWS SDK for Rust Developer Guide*; the `Converse` and `ConverseStream` API reference.
+**Going deeper.** The official [Bedrock Runtime examples for Rust](https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_bedrock-runtime_code_examples.html) in the *AWS SDK for Rust Developer Guide*; the [`Converse`](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html) and [`ConverseStream`](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html) API reference.
 
 ---
 
@@ -258,20 +258,20 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 ### Steps
 
-- [ ] 5.1 📚 🔭 **The data model.** Read *Observability Data Model* in the Langfuse docs. Fix these in your mind: **trace** (one end-to-end request, with `input`, `output`, `user_id`, `session_id`, `tags`, `metadata`, `release`, `version`, `environment`), **observation** (span, generation, event, plus the agentic types agent/tool/chain/retriever/evaluator; nestable), **generation** (one model call: model, parameters, usage, cost, linked prompt), **score** (numeric, categorical or boolean; on a trace, an observation or a session), **session** (several traces from the same conversation), **dataset** and **dataset run** (you meet these in Module 11).
+- [ ] 5.1 📚 🔭 **The data model.** Read [Observability Data Model](https://langfuse.com/docs/observability/data-model) in the Langfuse docs. Fix these in your mind: **trace** (one end-to-end request, with `input`, `output`, `user_id`, `session_id`, `tags`, `metadata`, `release`, `version`, `environment`), **observation** (span, generation, event, plus the agentic types agent/tool/chain/retriever/evaluator; nestable), **generation** (one model call: model, parameters, usage, cost, linked prompt), **score** (numeric, categorical or boolean; on a trace, an observation or a session), **session** (several traces from the same conversation), **dataset** and **dataset run** (you meet these in Module 11).
 - [ ] 5.2 🔭 **Decide where Langfuse runs.** Two routes, both fine for learning:
   - **Langfuse Cloud, EU region** (`https://cloud.langfuse.com`, data in Ireland `eu-west-1`, the same geography as your Bedrock). Zero infrastructure, and the free tier is enough for this tutorial.
   - **Self-hosted locally** with Docker Compose: `web` and `worker` components, PostgreSQL, ClickHouse, Redis/Valkey, S3/MinIO. Useful for understanding the architecture (asynchronous queue-based ingestion, analytics on ClickHouse) and for Module 15, where you evaluate self-hosting on AWS.
   Recommendation: start on EU Cloud and do the local self-host as a Module 15 experiment. Write the choice in an ADR with "data residency" as the rationale.
 - [ ] 5.3 🔭 Create an organization and a **project** (`agentic-playground`). Generate an **API key** pair (public and secret) and put them in `.env`. Langfuse keys are per project: different environments (local, dev, prod) can be different projects **or** the same project with an `environment` attribute on traces. For this tutorial use one project plus `environment`.
 - [ ] 5.4 🔭 **Models and prices.** Langfuse computes cost from `usage` only if it knows the model. Under *Settings → Models*, add definitions for your Bedrock model ids (matched by a regex on the name, for example `(?i)^eu\.anthropic\.claude-haiku-4-5.*`) with per-token prices for input, output, cache read and cache write, taken from 3.11. Without this step you will see tokens but no cost.
-- [ ] 5.5 💡 **How you reach Langfuse from Rust.** Langfuse has no official Rust SDK; it has two doors open to any language: the **OpenTelemetry endpoint** (`/api/public/otel`, OTLP over HTTP, Basic authentication with `public:secret`) and the **public REST API**. Use OTel for tracing and the API for prompts, datasets, scores and experiments. Useful crates: `opentelemetry-langfuse` (a builder for an OTLP exporter preconfigured for Langfuse) and `langfuse-ergonomic` (a public-API client with builders, on top of the OpenAPI-generated `langfuse-client-base`).
+- [ ] 5.5 💡 **How you reach Langfuse from Rust.** Langfuse has no official Rust SDK; it has two doors open to any language: the **OpenTelemetry endpoint** (`/api/public/otel`, OTLP over HTTP, Basic authentication with `public:secret`) and the **public REST API**. Use OTel for tracing and the API for prompts, datasets, scores and experiments. Useful crates: [`opentelemetry-langfuse`](https://github.com/genai-rs/opentelemetry-langfuse) (a builder for an OTLP exporter preconfigured for Langfuse) and [`langfuse-ergonomic`](https://github.com/genai-rs/langfuse-ergonomic) (a public-API client with builders, on top of the OpenAPI-generated [`langfuse-client-base`](https://github.com/genai-rs/langfuse-client-base)).
 - [ ] 5.6 In the `observability` crate, initialize the stack: `tracing` → `tracing-opentelemetry` → `opentelemetry_sdk` with an OTLP exporter pointing at Langfuse (`opentelemetry-otlp` with `endpoint = {LANGFUSE_HOST}/api/public/otel` and an `Authorization: Basic base64(public:secret)` header, or the builder from `opentelemetry-langfuse`). Keep the `fmt` layer on stdout for development. Use the batch exporter, and flush explicitly on shutdown, or CLI binaries will lose their last traces.
 - [ ] 5.7 🔭 **Mapping spans onto the data model.** Langfuse reads both the OpenTelemetry GenAI conventions and its own `langfuse.*` attributes. The minimum rules:
   - The **root** span becomes the trace: put `langfuse.session.id`, `langfuse.user.id` (already pseudonymized), `langfuse.trace.tags`, `langfuse.environment`, `langfuse.release` (the app version), `langfuse.trace.input` and `langfuse.trace.output` on it.
   - The span of an LLM call becomes a generation, with `langfuse.observation.type = "generation"`, `gen_ai.request.model` (or `langfuse.observation.model.name`), `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, and the cache details in `langfuse.observation.usage_details` (a JSON object with `input`, `output`, `cache_read_input_tokens`, `cache_creation_input_tokens`); `langfuse.observation.input` and `.output` carry the content (see 5.10 for privacy).
   - Tool spans: `langfuse.observation.type = "tool"`. Pipeline steps: `"span"` or `"chain"`.
-  📚 Check the exact names in the *OpenTelemetry* page of the Langfuse docs: the attribute list evolves.
+  📚 Check the exact names in the [OpenTelemetry page](https://langfuse.com/integrations/native/opentelemetry) of the Langfuse docs: the attribute list evolves.
 - [ ] 5.8 Write a helper in `observability` that the harness uses without knowing anything about Langfuse: `record_generation(span, &LlmRequest, &LlmResponse)`, which sets the 5.7 attributes from your neutral types. Wire it to the span from 4.10.
 - [ ] 5.9 🧪 Run `app hello` three times. In Langfuse open *Tracing → Traces*: you should see three traces, each with one generation, showing model, tokens, **cost** and latency. Open a generation and read its input, output and usage. If cost is missing, go back to 5.4. If the trace is missing, check the flush and the credentials.
 - [ ] 5.10 💡 🔭 **Content and privacy, first rule.** Decide **now** on a policy for `input`/`output`: full content in `local` and `dev`; in `prod` they pass through a redaction function (Module 13) and through sampling. Implement it as configuration in `observability`, not as scattered `if`s. Langfuse also offers masking at ingestion and per-project retention: note both options for Module 13.
@@ -283,7 +283,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 **Self-check.** Why do trace attributes (`session.id`, `user.id`, `tags`) belong on the root span and not only on a generation? What is the difference between one Langfuse project per environment and a single project with an `environment` attribute?
 
-**Going deeper.** The *OpenTelemetry* and *Observability Data Model* pages in the Langfuse docs; the READMEs of the `opentelemetry-langfuse` and `langfuse-ergonomic` crates; *Self-hosting* for the v3 architecture.
+**Going deeper.** The [OpenTelemetry](https://langfuse.com/integrations/native/opentelemetry) and [Observability Data Model](https://langfuse.com/docs/observability/data-model) pages in the Langfuse docs; the READMEs of the [`opentelemetry-langfuse`](https://github.com/genai-rs/opentelemetry-langfuse) and [`langfuse-ergonomic`](https://github.com/genai-rs/langfuse-ergonomic) crates; [Self-hosting](https://langfuse.com/self-hosting) for the v3 architecture.
 
 ---
 
@@ -297,14 +297,14 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 ### Steps
 
-- [ ] 6.1 📚 Read the prompt engineering guide in the Claude documentation (the *Prompt engineering* section on platform.claude.com) and the prompting notes for Claude 5 models: prompts written for older models tend to be over-prescriptive and degrade output on recent ones.
+- [ ] 6.1 📚 Read the [prompt engineering overview](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview) in the Claude documentation, then [Prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices), and the prompting notes for the Claude 5 models you will use ([Sonnet 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5), [Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)): prompts written for older models tend to be over-prescriptive and degrade output on recent ones.
 - [ ] 6.2 💡 **Anatomy of a system prompt.** In order: (1) role and operating context, (2) the task's goal, (3) rules and constraints (positive: "do X" works better than "do not do Y"), (4) output format, (5) examples (few-shot) only if they earn their place, (6) variable data **last**. XML tags (`<context>`, `<rules>`, `<examples>`) help the model separate the parts and are the standard way to delimit user input from everything else.
-- [ ] 6.3 📚 🔭 **Prompt Management in Langfuse.** Read *Prompt Management Concepts*. Fix these: a prompt has a **name**, immutable **versions** (1, 2, 3…), **labels** pointing at a version (`production` is what is served by default; `staging`, `latest` and custom labels), a **text** or **chat** type, **variables** with `{{name}}` syntax, a `config` (free-form JSON: put the model, effort and `max_tokens` there), tags, and the ability to compose prompts inside prompts. `production` labels can be **protected** so only certain roles move them.
+- [ ] 6.3 📚 🔭 **Prompt Management in Langfuse.** Read [Prompt Management Concepts](https://langfuse.com/docs/prompt-management/data-model). Fix these: a prompt has a **name**, immutable **versions** (1, 2, 3…), **labels** pointing at a version (`production` is what is served by default; `staging`, `latest` and custom labels), a **text** or **chat** type, **variables** with `{{name}}` syntax, a `config` (free-form JSON: put the model, effort and `max_tokens` there), tags, and the ability to compose prompts inside prompts. `production` labels can be **protected** so only certain roles move them.
 - [ ] 6.4 🔭 Create the `safety-classifier` prompt in Langfuse (chat type: a system message with the rules and a user message with `{{message}}`), with `config = { "model_role": "fast", "effort": "low", "max_tokens": 1024 }`. Assign the `production` label to v1. The `config` holds hints, not guarantees: if the fast model is Claude Haiku 4.5, which rejects effort, the capability table from 4.6 drops that field and the span shows it. The ceiling is generous on purpose: the answer is a small JSON, but a model that thinks before answering spends part of the ceiling on reasoning, and unused ceiling costs nothing.
 - [ ] 6.5 🔭 In the `prompts` crate implement `PromptStore::get(name, label)`:
   1. call `GET /api/public/v2/prompts/{name}?label=production` (through `langfuse-ergonomic`),
-  2. **cache in memory** with a TTL (60 seconds is the official SDKs' default; 5–10 minutes is fine in production),
-  3. **fall back** to the `prompts/<name>.md` file in the repository when Langfuse does not answer (this is the "guaranteed availability" pattern from the docs),
+  2. **cache in memory** with a TTL (60 seconds is the official SDKs' default, see [Caching](https://langfuse.com/docs/prompt-management/features/caching); 5–10 minutes is fine in production),
+  3. **fall back** to the `prompts/<name>.md` file in the repository when Langfuse does not answer (this is the [guaranteed availability](https://langfuse.com/docs/prompt-management/features/guaranteed-availability) pattern from the docs),
   4. return an object with `name`, `version`, `template`, `config` and a `render(vars)` method.
   A `just prompts-pull` job downloads snapshots of the `production` versions into `prompts/`, so every prompt change also shows up in a pull request diff and the fallback stays current.
 - [ ] 6.6 🔭 **Link prompts and generations.** When the harness makes a call using a prompt, set `langfuse.observation.prompt.name` and `langfuse.observation.prompt.version` on the generation's span. Opening the prompt in Langfuse then shows every generation that used it, with average cost and latency **per version**: this is the basis of every comparison.
@@ -349,7 +349,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
   ⚠️ Every `tool_result` from one turn goes in a **single** user message; splitting them teaches the model to stop making parallel calls. A failing tool returns a `tool_result` with `is_error = true`, never an exception that breaks the loop.
 - [ ] 7.4 **Limits.** Maximum iterations, an overall timeout, a token budget, and a list of "dangerous" tools requiring human approval: the loop suspends and returns an `AwaitingApproval` state the caller can resume. The guiding project has no dangerous tool yet, but the mechanism is needed.
-- [ ] 7.5 📚 **Designing good tools.** Read *Writing effective tools for agents*. Practical rules: few tools with sharp boundaries; names and descriptions written for the model (they say *when* to use it and *when not*); small, typed inputs; compact outputs (the result lands in the context and is paid for on every later turn); descriptive errors that tell the model how to correct itself.
+- [ ] 7.5 📚 **Designing good tools.** Read [Writing effective tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents). Practical rules: few tools with sharp boundaries; names and descriptions written for the model (they say *when* to use it and *when not*); small, typed inputs; compact outputs (the result lands in the context and is paid for on every later turn); descriptive errors that tell the model how to correct itself.
 - [ ] 7.6 🔭 **Nested traces.** The agent's span (`langfuse.observation.type = "agent"`) contains one generation per iteration and one `"tool"` span per tool execution, with input and output. In Langfuse the trace should read as a tree: iteration 1 → tool A, tool B → iteration 2 → final answer. Add `iterations` and `tool_calls` to the trace metadata.
 - [ ] 7.7 🧪 Example tools for the guiding project: `search_knowledge_base(query, top_k)` (for now over an in-memory list with text search; it becomes vector search in Module 8), `get_user_profile(user_id)`, `get_current_date()`. Build a demo where the model decides on its own when to search, and read it in Langfuse.
 - [ ] 7.8 **Tests without a network.** With `FakeLlmClient`, write tests verifying that: the loop stops at `EndTurn`; a nonexistent tool produces `is_error`; the iteration ceiling fires; two `tool_use` blocks in one message are executed in parallel and returned in a single message.
@@ -373,7 +373,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 ### Steps
 
-- [ ] 8.1 📚 Read *Effective context engineering for AI agents*. Concepts to note: context rot, "the smallest set of high-signal tokens", just-in-time retrieval, compaction, structured notes, sub-agents as a tool for context isolation.
+- [ ] 8.1 📚 Read [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents). Concepts to note: context rot, "the smallest set of high-signal tokens", just-in-time retrieval, compaction, structured notes, sub-agents as a tool for context isolation.
 - [ ] 8.2 💡 **Counting tokens.** Bedrock exposes a `CountTokens` operation (check availability for your model in your region); otherwise use `usage.inputTokens` from real calls to calibrate a local estimate (characters / 3.5 for Italian). Always record both the estimate **and** the real value: the gap tells you how much to trust the heuristic.
 - [ ] 8.3 💡 **An explicit budget.** Define a budget for the `GENERATION` call, for example: stable system ≤ 2,500 tokens, compact profile ≤ 400, knowledge base context ≤ 1,500, recent turns ≤ 3,000, plus the current message. Put it in configuration, not in the code. 🔭 Write the actual per-section split into the generation's `metadata`: in Langfuse you can then see where the tokens go when cost rises.
 - [ ] 8.4 🧪 **Short-term memory: a token-budgeted window.** Implement an append-only `conversation_log` in SQLite and derive `recent_turns` **from** the log: read turns backwards, accumulating tokens until the budget runs out. Measure in tokens, not in number of turns, so that people who write short messages are not penalized. Unit tests with fake turns.
@@ -448,7 +448,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 **Self-check.** Why is "the cheapest model that passes the tests" the wrong rule for `GENERATION` when the cost per **completed task** (not per call) is higher because of retries and regenerations?
 
-**Going deeper.** Bedrock's *Intelligent Prompt Routing* page; the orchestrator-workers pattern for delegating sub-tasks to small models without changing the model in the main loop.
+**Going deeper.** Bedrock's [Intelligent Prompt Routing](https://aws.amazon.com/bedrock/intelligent-prompt-routing/) page; the orchestrator-workers pattern from [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents), for delegating sub-tasks to small models without changing the model in the main loop.
 
 ---
 
@@ -462,7 +462,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 ### Steps
 
-- [ ] 11.1 📚 🔭 Read *LLM Evaluation Concepts* and *Evaluation Overview* in the Langfuse docs. Fix these: **dataset** (a collection of items with `input`, `expected_output`, `metadata`), **dataset run** (an experiment: each executed item produces a trace linked to the item, plus scores), **evaluator** (an LLM judge or a function assigning scores to production or experiment traces), **annotation queue** (a queue for human labelling), **score** in its three types (numeric, categorical, boolean).
+- [ ] 11.1 📚 🔭 Read [LLM Evaluation Concepts](https://langfuse.com/docs/evaluation/core-concepts) and [Evaluation Overview](https://langfuse.com/docs/evaluation/overview) in the Langfuse docs. Fix these: **dataset** (a collection of items with `input`, `expected_output`, `metadata`), **dataset run** (an experiment: each executed item produces a trace linked to the item, plus scores), **evaluator** (an LLM judge or a function assigning scores to production or experiment traces), **annotation queue** (a queue for human labelling), **score** in its three types (numeric, categorical, boolean).
 - [ ] 11.2 💡 **What you evaluate, per step.** `SAFETY`: accuracy, and above all **false negatives** (a risk that went unseen). `GENERATION`: schema conformance, correct use of knowledge base references (no claims absent from the cited records), tone, Italian language quality, absence of diagnosis. `GUARDRAILS`: agreement with human judgement. `PROFILE_UPDATE`: extraction correctness. Each step gets its own dataset.
 - [ ] 11.3 🔭 **Datasets.** Source of truth: JSONL files under `datasets/`, versioned in git. A `just datasets-push` command uploads them to Langfuse as datasets (`safety-v1`, `generation-v1`…) through the API. Where the cases come from: written by hand, synthesized with a model **and then reviewed by a person**, or (in production) from real traces added to the dataset with one click in the Langfuse interface. ⚠️ Never use the output of the model under evaluation as ground truth. Balance the classes. For `SAFETY`, include cases in both directions explicitly (must fire / must not fire).
 - [ ] 11.4 💡 **Types of grader.** (1) Programmatic: exact match, schema validation, regex, checking that cited knowledge base ids exist. (2) Rubric with an LLM judge: **atomic** properties scored one at a time (`no_diagnosis`, `grounded_in_kb`, `tone_ok`), with structured output, treating the candidate text as data rather than instructions. (3) Pairwise: two answers, which is better (randomize the A/B order). Use a judge from a **different family** than the model under evaluation when you can.
@@ -521,7 +521,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 ### Steps
 
-- [ ] 13.1 📚 Read the *OWASP Top 10 for LLM Applications*. For each of the ten entries, write whether and how it touches the guiding project.
+- [ ] 13.1 📚 Read the [OWASP Top 10 for LLM Applications](https://genai.owasp.org/llm-top-10/). For each of the ten entries, write whether and how it touches the guiding project.
 - [ ] 13.2 💡 **Prompt injection.** Defences: clear delimitation of data (XML tags), system prompt instructions to treat that content as data, least privilege for tools (a tool cannot do more than it needs to), human confirmation for irreversible actions, output validation before execution or display. No defence is complete: hence the layers and the regression dataset (12.9).
 - [ ] 13.3 💡 **Bedrock Guardrails.** Create a guardrail with content filters, denied topics (for example "diagnosis"), a PII filter with masking, and a grounding check (is the output supported by the source?). Apply it with `ApplyGuardrail` to input and output as a layer **on top of** your own LLM `GUARDRAILS`. Compare: what does one catch that the other does not? What cost and latency does it add? 🔭 The outcome is one more score on the trace (`bedrock_guardrail_action`).
 - [ ] 13.4 💡 🔭 **Personal data in prompts and in traces.** Minimize what enters the prompt; pseudonymize identifiers (the `user.id` in Langfuse must never be a real identifier); apply **PII redaction before export** in traces (the function from 5.10: names, phone numbers, emails, national identifiers; for free text consider a small model or the Bedrock Guardrails PII API); set **retention** per Langfuse project; document the data flow (who sees what, in which region). Bedrock does not use your data to train models and does not retain it beyond the request, except for logging you enable yourself: revisit the choice from 3.9.
@@ -566,7 +566,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 **Self-check.** Why is the `guardrail_pass` rate an excellent canary for silent provider changes? Why is sampling essential for online evaluation?
 
-**Going deeper.** Langfuse docs: *Evaluation* (evaluators on live traffic), *Dashboards*, *Alerts*, *Annotation Queues*, *Metrics API*, *Public API*.
+**Going deeper.** Langfuse docs: [LLM-as-a-Judge](https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge) (evaluators on live traffic), [Custom Dashboards](https://langfuse.com/docs/metrics/features/custom-dashboards), [Alerts](https://langfuse.com/docs/observability/features/alerts), [Annotation Queues](https://langfuse.com/docs/evaluation/evaluation-methods/annotation-queues), [Metrics API](https://langfuse.com/docs/metrics/features/metrics-api), [Public API](https://langfuse.com/docs/api-and-data-platform/features/public-api).
 
 ---
 
@@ -606,7 +606,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 To explore once the core is solid. Each one is a small experiment with a card in the Work Log.
 
-- [ ] 16.1 **Agent frameworks compared.** Reimplement the Module 7 agent with **Rig** (`rig-core` + `rig-bedrock`, the most mature Rust framework, with typed tools, RAG, MCP and OpenTelemetry attributes built in). Compare lines of code, control over the loop, testability, and observability in Langfuse. To see what a "complete" framework does, also look at the concepts in LangChain 1.x (Python: `create_agent`, middleware, LangGraph) without switching stacks: your harness **is** an agent with hand-written middleware. ADR: "framework versus hand-written harness".
+- [ ] 16.1 **Agent frameworks compared.** Reimplement the Module 7 agent with **[Rig](https://github.com/0xPlaygrounds/rig)** ([`rig-core`](https://docs.rs/rig-core) + [`rig-bedrock`](https://docs.rs/rig-bedrock), the most mature Rust framework, with typed tools, RAG, MCP and OpenTelemetry attributes built in). Compare lines of code, control over the loop, testability, and observability in Langfuse. To see what a "complete" framework does, also look at the concepts in LangChain 1.x (Python: `create_agent`, middleware, LangGraph; start from [What's new in LangChain v1](https://docs.langchain.com/oss/python/releases/langchain-v1) and [Agent middleware](https://www.langchain.com/blog/agent-middleware)) without switching stacks: your harness **is** an agent with hand-written middleware. ADR: "framework versus hand-written harness".
 - [ ] 16.2 **Multi-agent (orchestrator-workers).** An orchestrator delegates sub-tasks to workers using a cheap model and isolated context, then synthesizes. In Langfuse the trace shows the whole tree. Compare against the single-model pipeline on a knowledge base research task with several questions.
 - [ ] 16.3 **Tool search and on-demand loading.** With dozens of tools the list itself costs: techniques for exposing only the tools relevant to a turn (a local index, short descriptions with the full schema on request).
 - [ ] 16.4 **Memory as a tool.** Give the model a `memory_read/write` tool over a directory or table and let it decide what to remember; compare with the structured profile from Module 8.
@@ -656,47 +656,48 @@ To explore once the core is solid. Each one is a small experiment with a card in
 ## Appendix B · Resources
 
 **Concepts and prompting (Anthropic)**
-- Building effective agents: https://www.anthropic.com/engineering/building-effective-agents
-- Effective context engineering for AI agents: https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
-- Writing effective tools for agents: https://www.anthropic.com/engineering/writing-tools-for-agents
-- Claude documentation (prompt engineering, structured outputs, tool use, Claude 5 notes): https://platform.claude.com/docs
+- [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
+- [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
+- [Writing effective tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents)
+- [Claude documentation](https://platform.claude.com/docs/en/home): [prompt engineering overview](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview), [prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices), [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), [tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview), and the prompting notes for [Sonnet 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5) and [Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)
 
 **Amazon Bedrock**
-- User guide: https://docs.aws.amazon.com/bedrock/latest/userguide/
-- Model access: https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html
-- Converse API: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
-- Structured output: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-- Claude parameters on Bedrock: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
-- Guardrails: https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
-- Intelligent Prompt Routing: https://aws.amazon.com/bedrock/intelligent-prompt-routing/
-- AgentCore: https://aws.amazon.com/bedrock/agentcore/
-- Pricing: https://aws.amazon.com/bedrock/pricing/
+- [User guide](https://docs.aws.amazon.com/bedrock/latest/userguide/what-is-bedrock.html)
+- [Model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)
+- [Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html) and [ConverseStream API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html)
+- [Structured output](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html)
+- [Claude parameters on Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html)
+- [Guardrails](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html)
+- [Intelligent Prompt Routing](https://aws.amazon.com/bedrock/intelligent-prompt-routing/)
+- [AgentCore](https://aws.amazon.com/bedrock/agentcore/)
+- [Pricing](https://aws.amazon.com/bedrock/pricing/)
 
 **Langfuse**
-- Documentation: https://langfuse.com/docs
-- Observability data model: https://langfuse.com/docs/observability/data-model
-- OpenTelemetry integration (endpoint, attributes): https://langfuse.com/integrations/native/opentelemetry
-- Prompt management (concepts, versions and labels, caching, guaranteed availability, linking to traces): https://langfuse.com/docs/prompt-management/data-model
-- Evaluation (concepts, datasets, experiments, evaluators, annotation queues): https://langfuse.com/docs/evaluation/overview
-- Public API: https://langfuse.com/docs/api-and-data-platform/features/public-api
-- Self-hosting (v3 architecture, Docker Compose, Helm): https://langfuse.com/self-hosting
-- Data regions and EU residency: https://langfuse.com/security/data-regions and https://langfuse.com/resources/engineering/langfuse-eu-data-residency-gdpr
-- Changelog (features move fast): https://langfuse.com/changelog
-- Rust crates: `opentelemetry-langfuse`, `langfuse-ergonomic`, `langfuse-client-base` (the genai-rs organization on GitHub)
+- [Documentation](https://langfuse.com/docs)
+- [Observability data model](https://langfuse.com/docs/observability/data-model)
+- [OpenTelemetry integration](https://langfuse.com/integrations/native/opentelemetry) (endpoint, attributes)
+- Prompt management: [concepts, versions and labels](https://langfuse.com/docs/prompt-management/data-model), [caching](https://langfuse.com/docs/prompt-management/features/caching), [guaranteed availability](https://langfuse.com/docs/prompt-management/features/guaranteed-availability), [linking to traces](https://langfuse.com/docs/prompt-management/features/link-to-traces)
+- Evaluation: [overview](https://langfuse.com/docs/evaluation/overview), [concepts](https://langfuse.com/docs/evaluation/core-concepts), [LLM-as-a-Judge](https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge), [annotation queues](https://langfuse.com/docs/evaluation/evaluation-methods/annotation-queues)
+- Dashboards and alerts: [custom dashboards](https://langfuse.com/docs/metrics/features/custom-dashboards), [alerts](https://langfuse.com/docs/observability/features/alerts), [Metrics API](https://langfuse.com/docs/metrics/features/metrics-api)
+- [Public API](https://langfuse.com/docs/api-and-data-platform/features/public-api)
+- [Self-hosting](https://langfuse.com/self-hosting) (v3 architecture, Docker Compose, Helm)
+- [Data regions](https://langfuse.com/security/data-regions) and [EU data residency and GDPR](https://langfuse.com/resources/engineering/langfuse-eu-data-residency-gdpr)
+- [Changelog](https://langfuse.com/changelog) (features move fast)
+- Rust crates from the genai-rs organization: [`opentelemetry-langfuse`](https://github.com/genai-rs/opentelemetry-langfuse), [`langfuse-ergonomic`](https://github.com/genai-rs/langfuse-ergonomic), [`langfuse-client-base`](https://github.com/genai-rs/langfuse-client-base)
 
 **Rust**
-- Bedrock Runtime examples for Rust: https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_bedrock-runtime_code_examples.html
-- Testing with the SDK (mocks and replay): https://docs.aws.amazon.com/sdk-for-rust/latest/dg/testing.html
-- `aws-sdk-bedrockruntime` on docs.rs: https://docs.rs/aws-sdk-bedrockruntime
-- Official MCP SDK (`rmcp`): https://github.com/modelcontextprotocol/rust-sdk
-- Rig (optional comparison): https://github.com/0xPlaygrounds/rig and the `rig-bedrock` crate
-- `schemars`, `insta`, `proptest`, `wiremock`, `aws-smithy-mocks`, `tracing-opentelemetry`, `opentelemetry-otlp` on crates.io
+- [Bedrock Runtime examples for Rust](https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_bedrock-runtime_code_examples.html)
+- [Testing with the SDK](https://docs.aws.amazon.com/sdk-for-rust/latest/dg/testing.html) (mocks and replay)
+- [`aws-sdk-bedrockruntime` on docs.rs](https://docs.rs/aws-sdk-bedrockruntime)
+- [Official MCP SDK (`rmcp`)](https://github.com/modelcontextprotocol/rust-sdk)
+- [Rig](https://github.com/0xPlaygrounds/rig) and the [`rig-bedrock`](https://docs.rs/rig-bedrock) crate (optional comparison)
+- Crate docs: [`schemars`](https://docs.rs/schemars), [`insta`](https://docs.rs/insta), [`proptest`](https://docs.rs/proptest), [`wiremock`](https://docs.rs/wiremock), [`aws-smithy-mocks`](https://docs.rs/aws-smithy-mocks), [`tracing-opentelemetry`](https://docs.rs/tracing-opentelemetry), [`opentelemetry-otlp`](https://docs.rs/opentelemetry-otlp)
 
 **Observability and security**
-- OpenTelemetry GenAI semantic conventions: https://opentelemetry.io/docs/specs/semconv/gen-ai/
-- OpenTelemetry Collector: https://opentelemetry.io/docs/collector/
-- Datadog LLM Observability (for correlation with infrastructure): https://docs.datadoghq.com/llm_observability/
-- OWASP Top 10 for LLM Applications: https://genai.owasp.org/
+- [OpenTelemetry GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai), now maintained in their own repository
+- [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
+- [Datadog Agent Observability](https://docs.datadoghq.com/llm_observability/) (for correlation with infrastructure)
+- [OWASP Top 10 for LLM Applications](https://genai.owasp.org/llm-top-10/)
 
 ---
 
