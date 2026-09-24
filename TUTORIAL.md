@@ -148,7 +148,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 - [X] 3.1 **Account.** Use a dedicated **sandbox** AWS account (if the company has AWS Organizations, ask for one; otherwise a personal account). MFA on the root user, and never work as root.
 - [X] 3.2 **Identity.** Prefer IAM Identity Center (SSO) with a permission set; otherwise an IAM user with MFA and rotated access keys. To get going, the managed policy `AmazonBedrockFullAccess` is fine; **before Module 15** replace it with a policy granting only `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` (these are the actions Converse and ConverseStream use too) on the ARNs of the inference profiles you actually use.
 - [X] 3.3 **AWS CLI.** Already installed (v2.36). Configure a profile: `aws configure sso` or `aws configure --profile bedrock-playground`. Verify with `aws sts get-caller-identity --profile bedrock-playground`.
-- [ ] 3.4 **Region.** Pick `eu-west-1` (Ireland) or `eu-central-1` (Frankfurt) as your home region. ⚠️ Milan (`eu-south-1`) has a thinner model catalogue. 💡 With **cross-region inference** (an inference profile prefixed `eu.`) Bedrock routes across EU regions while staying inside the geography: more capacity, and data that does not leave the EU. The `global.` prefix can leave the EU: do not use it in this project.
+- [X] 3.4 **Region.** Pick `eu-west-1` (Ireland) or `eu-central-1` (Frankfurt) as your home region. ⚠️ Milan (`eu-south-1`) has a thinner model catalogue. 💡 With **cross-region inference** (an inference profile prefixed `eu.`) Bedrock routes across EU regions while staying inside the geography: more capacity, and data that does not leave the EU. The `global.` prefix can leave the EU: do not use it in this project.
 - [ ] 3.5 **Enabling models.** Console → Bedrock → *Model catalog*. **Anthropic** models require a *use case* form, filled in once per account, with access granted immediately on submission. Other providers' models (Amazon Nova, Llama, Mistral) need no form, and you enable them in Module 11, when you first compare against them. The AWS Marketplace subscription is created automatically on first invocation if the identity has the right permissions.
 - [ ] 3.6 **Find the right ids.** Ids change: do not copy them from tutorials, read them from your account.
 
@@ -748,3 +748,8 @@ Append one entry per working session. A few lines: what you did, what you learne
 - Learned: …
 - Open questions: …
 ```
+
+### 2026-09-24
+- Did: chose `eu-west-1` as the home region (3.4) and added a dedicated `bedrock-playground` AWS profile, so the shared `sandbox` profile stays on `eu-south-1`.
+- Learned: the company SCP denies Bedrock in `eu-central-1`; Milan lists the same Claude 5 `eu.*` profiles as Ireland, but not the Llama and Mistral ones needed in Module 11.
+- Open questions: `eu.*` profiles also route to `eu-central-1`; check in 3.10 whether the SCP blocks routed calls.
