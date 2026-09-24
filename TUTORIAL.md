@@ -153,8 +153,8 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 - [X] 3.6 **Find the right ids.** Ids change: do not copy them from tutorials, read them from your account.
 
   ```bash
-  aws bedrock list-foundation-models --region eu-west-1 --by-provider anthropic --query 'modelSummaries[].modelId'
-  aws bedrock list-inference-profiles --region eu-west-1 --query 'inferenceProfileSummaries[].inferenceProfileId'
+  aws bedrock list-foundation-models --region eu-west-1 --profile bedrock-playground --by-provider anthropic --query 'modelSummaries[].modelId'
+  aws bedrock list-inference-profiles --region eu-west-1 --profile bedrock-playground --query 'inferenceProfileSummaries[].inferenceProfileId'
   ```
 
   Example shapes, to be verified: `eu.anthropic.claude-sonnet-5`, `eu.anthropic.claude-opus-5`, `eu.anthropic.claude-haiku-4-5-20251001-v1:0`. Now the project needs its first configuration values: copy `.env.example` to `.env`, which git ignores, and fill in the AWS section with your profile, the region, a **fast and cheap** model (`BEDROCK_MODEL_FAST`, typically Haiku) and a **main** one (`BEDROCK_MODEL_MAIN`, typically Sonnet).
