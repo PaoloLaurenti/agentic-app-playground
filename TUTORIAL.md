@@ -150,7 +150,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 - [X] 3.3 **AWS CLI.** Already installed (v2.36). Configure a profile: `aws configure sso` or `aws configure --profile bedrock-playground`. Verify with `aws sts get-caller-identity --profile bedrock-playground`.
 - [X] 3.4 **Region.** Pick `eu-west-1` (Ireland) or `eu-central-1` (Frankfurt) as your home region. ⚠️ Milan (`eu-south-1`) has a thinner model catalogue. 💡 With **cross-region inference** (an inference profile prefixed `eu.`) Bedrock routes across EU regions while staying inside the geography: more capacity, and data that does not leave the EU. The `global.` prefix can leave the EU: do not use it in this project.
 - [X] 3.5 **Enabling models.** Console → Bedrock → *Model catalog*. **Anthropic** models require a *use case* form, filled in once per account, with access granted immediately on submission. Other providers' models (Amazon Nova, Llama, Mistral) need no form, and you enable them in Module 11, when you first compare against them. The AWS Marketplace subscription is created automatically on first invocation if the identity has the right permissions.
-- [ ] 3.6 **Find the right ids.** Ids change: do not copy them from tutorials, read them from your account.
+- [X] 3.6 **Find the right ids.** Ids change: do not copy them from tutorials, read them from your account.
 
   ```bash
   aws bedrock list-foundation-models --region eu-west-1 --by-provider anthropic --query 'modelSummaries[].modelId'
@@ -752,6 +752,6 @@ Append one entry per working session. A few lines: what you did, what you learne
 ```
 
 ### 2026-09-24
-- Did: chose `eu-west-1` as the home region (3.4) and added a dedicated `bedrock-playground` AWS profile, so the shared `sandbox` profile stays on `eu-south-1`. Submitted the Anthropic use case form (3.5).
-- Learned: the company SCP denies Bedrock in `eu-central-1`; Milan lists the same Claude 5 `eu.*` profiles as Ireland, but not the Llama and Mistral ones needed in Module 11. `aws bedrock get-use-case-for-model-access` and `get-foundation-model-availability` show model access from the CLI.
+- Did: chose `eu-west-1` as the home region (3.4) and added a dedicated `bedrock-playground` AWS profile, so the shared `sandbox` profile stays on `eu-south-1`. Submitted the Anthropic use case form (3.5). Created `.env` with Haiku 4.5 as the fast model and Sonnet 5 as the main one (3.6).
+- Learned: the company SCP denies Bedrock in `eu-central-1`; Milan lists the same Claude 5 `eu.*` profiles as Ireland, but not the Llama and Mistral ones needed in Module 11. `aws bedrock get-use-case-for-model-access` and `get-foundation-model-availability` show model access from the CLI. Fable 5 has only a `global.*` profile, so this project cannot use it.
 - Open questions: `eu.*` profiles also route to `eu-central-1`; check in 3.10 whether the SCP blocks routed calls.
