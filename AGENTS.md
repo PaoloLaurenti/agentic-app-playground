@@ -33,6 +33,10 @@ Inspired by an internal Mia Clinic document, taken as a starting point rather th
   learned. Rig is an optional comparison (Module 16), not a dependency of the path.
 - **One change at a time.** When measuring anything (prompt, model, effort), change a single
   variable and record the result. This is a working rule, not just a methodological one.
+- **Create things when they are needed.** No crate, folder, dependency, `just` recipe,
+  configuration value or cloud resource is created before the module that first uses it.
+  Bulk scaffolding hides why each piece exists: if a step prepares something for later, move it
+  to where it is used.
 
 ## Stack
 
@@ -56,20 +60,17 @@ AGENTS.md          this file
 docs/adr/          architecture decisions, from template 0000
 ```
 
-Planned, created in Module 2 (do not build it ahead of time):
+Where it is heading. Each piece is created by the module that first needs it, never earlier:
 
-```text
-crates/llm-core/       neutral types and the LlmClient trait
-crates/llm-bedrock/    implementation over Converse
-crates/observability/  tracing, OpenTelemetry, Langfuse client
-crates/prompts/        prompt loading from Langfuse with cache and fallback
-crates/harness/        agent loop, tool registry, context, pipeline steps
-crates/router/         model registry, routing, fallback
-crates/evals/          evaluation runner and dataset runs
-crates/app/            binary: CLI and HTTP server
-prompts/               prompt snapshots downloaded from Langfuse (fallback and PR diffs)
-datasets/              test cases in JSONL, synthetic only
-```
+| Piece | Purpose | Created in |
+|---|---|---|
+| a single crate at the root | the first binary, later moved to `crates/app` | Module 2 |
+| the workspace, `crates/llm-core`, `crates/llm-bedrock`, `crates/app` | neutral types and the `LlmClient` trait; its Converse implementation; the CLI | Module 4 |
+| `crates/observability` | tracing, OpenTelemetry, Langfuse client | Module 5 |
+| `crates/prompts`, `prompts/`, `datasets/` | prompts from Langfuse with cache and fallback; their snapshots; test cases in JSONL, synthetic only | Module 6 |
+| `crates/harness` | agent loop, tool registry, context, pipeline steps | Module 7 |
+| `crates/router` | model registry, routing, fallback | Module 10 |
+| `crates/evals` | evaluation runner and dataset runs | Module 11 |
 
 ## Conventions
 
@@ -123,7 +124,7 @@ above a threshold set above the noise.
 
 ## Commands
 
-The Cargo workspace does not exist yet: it is created in Module 2 together with the `justfile`.
-The planned commands are `just check`, `just test`, `just eval`, `just run`.
-
-Until then the only useful command is a toolchain check: `rustc --version`.
+The project starts as a single crate in Module 2 and becomes a workspace in Module 4. `just`
+recipes are added by the module that needs them: `check` and `test` in Module 2, `run` in Module 4,
+`prompts-pull` in Module 6, `datasets-push` and `eval` in Module 11. The `justfile` shows what
+exists today; before Module 2 the only useful command is a toolchain check: `rustc --version`.

@@ -49,8 +49,9 @@ cp .env.example .env    # then fill in the values by following Modules 3 and 5
 rustc --version         # check that the pinned toolchain is active
 ```
 
-Then open `TUTORIAL.md` and start at Module 1. The Cargo workspace and the `just` commands are
-created in Module 2, so until then there is no code to build.
+Then open `TUTORIAL.md` and start at Module 1. The first crate and the first `just` recipes
+appear in Module 2; from there the project grows one piece at a time, each piece in the module
+that needs it.
 
 ## Conventions
 
