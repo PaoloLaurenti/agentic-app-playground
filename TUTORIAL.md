@@ -253,7 +253,7 @@ Every entry points to the step whose paragraph explains it. The foundations are 
   }
   ```
 
-- [ ] 4.2 Make `llm-bedrock` depend on `llm-core` (a path dependency inside the workspace) and add `aws-config` (feature `behavior-version-latest`), which reads credentials and region from your AWS profile, and `aws-sdk-bedrockruntime`, the Bedrock Runtime client. Build the client once, because it is expensive, and share it with `Arc`.
+- [X] 4.2 Make `llm-bedrock` depend on `llm-core` (a path dependency inside the workspace) and add `aws-config` (feature `behavior-version-latest`), which reads credentials and region from your AWS profile, and `aws-sdk-bedrockruntime`, the Bedrock Runtime client. Build the client once, because it is expensive, and share it with `Arc`.
 
   ```rust
   let cfg = aws_config::defaults(BehaviorVersion::latest()).region(Region::new("eu-west-1")).load().await;
