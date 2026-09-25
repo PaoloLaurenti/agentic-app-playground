@@ -161,7 +161,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 - [X] 3.7 **Quotas.** Console → Service Quotas → Bedrock: look for *requests per minute* and *tokens per minute* for your chosen models. Write them down: they are the ceiling the router (Module 10) has to respect. Request an increase only if you need one.
 - [X] 3.8 **Budget.** AWS Budgets: a monthly budget (say 30 €) with email alerts at 50% and 80%.
 - [X] 3.9 **Invocation logging.** Console → Bedrock → *Settings* → *Model invocation logging* to CloudWatch Logs. Useful in the first days of debugging; once you have Langfuse (Module 5) it becomes redundant. ⚠️ Those logs contain full prompts: in production with personal data this choice must be revisited (Module 13).
-- [ ] 3.10 🧪 **First call from the CLI.** Load `.env` into your shell first, so that `$BEDROCK_MODEL_FAST` is defined: `set -a; source .env; set +a`.
+- [X] 3.10 🧪 **First call from the CLI.** Load `.env` into your shell first, so that `$BEDROCK_MODEL_FAST` is defined: `set -a; source .env; set +a`.
 
   ```bash
   aws bedrock-runtime converse \
@@ -755,6 +755,6 @@ Append one entry per working session. A few lines: what you did, what you learne
 - Open questions: `eu.*` profiles also route to `eu-central-1`; check in 3.10 whether the SCP blocks routed calls. The Sonnet 5 quota request is pending: if it is not granted before Module 4, switch `BEDROCK_MODEL_MAIN` to Sonnet 4.6 (50 RPM, 6M TPM). After 3.10, check in Cost Explorer whether Claude costs show up under Amazon Bedrock or as an AWS Marketplace item: in the second case the budget filter misses them.
 
 ### 2026-09-25
-- Did: enabled text invocation logging (3.9) to `/bedrock-playground/model-invocations`, with 14-day retention. Tried the first CLI call (3.10): denied.
-- Learned: a role that the console has just created can fail validation until IAM propagates it; saving again with the existing role works. The SCP also applies in the region where an `eu.*` profile routes the call: it denies `eu-north-1`, `eu-west-3` and `eu-central-1`, and `eu-south-2` is not enabled, so every Haiku call failed (6 of 6, all routed to `eu-north-1`).
-- Open questions: 3.10 is blocked until the organization admins allow Bedrock invocations in those regions. The Sonnet 5 quota request and the budget filter check are still open.
+- Did: enabled text invocation logging (3.9) to `/bedrock-playground/model-invocations`, with 14-day retention. Tried the first CLI call (3.10): denied at first, working after the organization admins changed the SCP.
+- Learned: a role that the console has just created can fail validation until IAM propagates it; saving again with the existing role works. The SCP also applies in the region where an `eu.*` profile routes the call: it denies `eu-north-1`, `eu-west-3` and `eu-central-1`, and `eu-south-2` is not enabled, so every Haiku call failed (6 of 6, all routed to `eu-north-1`). First measurement on Haiku 4.5: 15 input and 5 output tokens, `end_turn`, latency 641–789 ms over three identical calls, the first one the slowest. The `inferenceRegion` field of the invocation log shows where a call actually ran: `eu-north-1` for all of them.
+- Open questions: the Sonnet 5 quota request and the budget filter check are still open.
