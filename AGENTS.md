@@ -55,9 +55,16 @@ Inspired by an internal Mia Clinic document, taken as a starting point rather th
 Current:
 
 ```text
-TUTORIAL.md        the learning path, 16 modules
-AGENTS.md          this file
-docs/adr/          architecture decisions, from template 0000
+Cargo.toml          the workspace: a virtual manifest whose members are crates/*
+crates/app          the CLI binary
+crates/llm-core     neutral types and the LlmClient trait, with no provider SDK
+crates/llm-bedrock  the Converse implementation of LlmClient
+justfile            the check and test recipes
+.github/workflows/  CI: just check and just test on every pull request
+.env.example        the configuration variables, without values
+TUTORIAL.md         the learning path, 16 modules
+AGENTS.md           this file
+docs/adr/           architecture decisions, from template 0000
 ```
 
 Where it is heading. Each piece is created by the module that first needs it, never earlier:
