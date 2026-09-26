@@ -433,6 +433,21 @@ mod tests {
     }
 
     #[test]
+    fn a_cache_point_closes_the_system_prompt_prefix() {
+        let system = to_sdk_system(&[
+            SystemBlock::Text("You are the assistant of a fictional clinic.".into()),
+            SystemBlock::CachePoint,
+        ])
+        .unwrap();
+
+        assert!(matches!(&system[0], sdk::SystemContentBlock::Text(_)));
+        assert!(matches!(
+            &system[1],
+            sdk::SystemContentBlock::CachePoint(point) if point.r#type() == &sdk::CachePointType::Default
+        ));
+    }
+
+    #[test]
     fn a_converse_output_becomes_a_response_without_reasoning_blocks() {
         let reasoning = sdk::ReasoningTextBlock::builder()
             .text("One word is enough.")
