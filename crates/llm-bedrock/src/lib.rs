@@ -1,5 +1,6 @@
 //! The Amazon Bedrock implementation of [`llm_core::LlmClient`], over the Converse API.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display};
 use std::time::Duration;
@@ -11,6 +12,7 @@ use aws_sdk_bedrockruntime::operation::converse::{ConverseError, ConverseOutput}
 use aws_sdk_bedrockruntime::operation::converse_stream::ConverseStreamError;
 use aws_sdk_bedrockruntime::types as sdk;
 use aws_sdk_bedrockruntime::types::error::{ConverseStreamOutputError, ValidationException};
+use aws_smithy_types::{Document, Number};
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use llm_core::{
@@ -64,6 +66,7 @@ impl LlmClient for BedrockClient {
             .set_system(request.system)
             .set_messages(Some(request.messages))
             .inference_config(request.inference_config)
+            .set_additional_model_request_fields(request.additional_fields)
             .send()
             .await
             .map_err(|err| from_sdk_error(err, from_converse_error))?;
@@ -83,6 +86,7 @@ impl LlmClient for BedrockClient {
             .set_system(request.system)
             .set_messages(Some(request.messages))
             .inference_config(request.inference_config)
+            .set_additional_model_request_fields(request.additional_fields)
             .send()
             .await
             .map_err(|err| from_sdk_error(err, from_converse_stream_error))?;
@@ -114,6 +118,9 @@ struct SdkRequest {
     system: Option<Vec<sdk::SystemContentBlock>>,
     messages: Vec<sdk::Message>,
     inference_config: sdk::InferenceConfiguration,
+    /// Model-specific fields, such as effort for Claude, which Bedrock passes to the model as they
+    /// are. The fields every model shares go in `inference_config` instead.
+    additional_fields: Option<Document>,
 }
 
 impl TryFrom<&LlmRequest> for SdkRequest {
@@ -127,13 +134,48 @@ impl TryFrom<&LlmRequest> for SdkRequest {
             .map(to_sdk_message)
             .collect::<Result<Vec<_>, _>>()?;
         let max_tokens = i32::try_from(req.max_tokens).map_err(invalid)?;
+        let additional_fields = match &req.extra {
+            serde_json::Value::Null => None,
+            extra @ serde_json::Value::Object(_) => Some(to_document(extra)),
+            other => {
+                return Err(LlmError::ValidationError(format!(
+                    "extra must be a JSON object or null, not {other}"
+                )));
+            }
+        };
         Ok(Self {
             system: (!system.is_empty()).then_some(system),
             messages,
             inference_config: sdk::InferenceConfiguration::builder()
                 .max_tokens(max_tokens)
                 .build(),
+            additional_fields,
         })
+    }
+}
+
+/// Converts JSON into the SDK's own JSON type, which Converse expects for model-specific fields.
+fn to_document(value: &serde_json::Value) -> Document {
+    match value {
+        serde_json::Value::Null => Document::Null,
+        serde_json::Value::Bool(value) => Document::Bool(*value),
+        serde_json::Value::Number(number) => match (number.as_u64(), number.as_i64()) {
+            (Some(value), _) => Document::Number(Number::PosInt(value)),
+            (None, Some(value)) => Document::Number(Number::NegInt(value)),
+            (None, None) => number.as_f64().map_or(Document::Null, |value| {
+                Document::Number(Number::Float(value))
+            }),
+        },
+        serde_json::Value::String(value) => Document::String(value.clone()),
+        serde_json::Value::Array(values) => {
+            Document::Array(values.iter().map(to_document).collect())
+        }
+        serde_json::Value::Object(fields) => Document::Object(
+            fields
+                .iter()
+                .map(|(key, value)| (key.clone(), to_document(value)))
+                .collect::<HashMap<_, _>>(),
+        ),
     }
 }
 
@@ -619,6 +661,78 @@ mod tests {
                 latency: Duration::from_millis(650),
             })
         );
+    }
+
+    fn request_with_extra(extra: serde_json::Value) -> LlmRequest {
+        LlmRequest {
+            model: llm_core::ModelId::new("test-model"),
+            system: vec![],
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text("ready?".into())],
+            }],
+            max_tokens: 50,
+            extra,
+        }
+    }
+
+    #[test]
+    fn extra_json_becomes_an_sdk_document_with_the_same_shape() {
+        let extra = serde_json::json!({
+            "output_config": { "effort": "low" },
+            "thinking": { "type": "enabled", "budget_tokens": 1024 },
+            "stop": ["END", null],
+            "temperature": 0.5,
+            "offset": -3,
+            "strict": true,
+        });
+
+        let request = SdkRequest::try_from(&request_with_extra(extra)).unwrap();
+
+        let expected = Document::Object(HashMap::from([
+            (
+                "output_config".to_owned(),
+                Document::Object(HashMap::from([(
+                    "effort".to_owned(),
+                    Document::String("low".into()),
+                )])),
+            ),
+            (
+                "thinking".to_owned(),
+                Document::Object(HashMap::from([
+                    ("type".to_owned(), Document::String("enabled".into())),
+                    (
+                        "budget_tokens".to_owned(),
+                        Document::Number(Number::PosInt(1024)),
+                    ),
+                ])),
+            ),
+            (
+                "stop".to_owned(),
+                Document::Array(vec![Document::String("END".into()), Document::Null]),
+            ),
+            (
+                "temperature".to_owned(),
+                Document::Number(Number::Float(0.5)),
+            ),
+            ("offset".to_owned(), Document::Number(Number::NegInt(-3))),
+            ("strict".to_owned(), Document::Bool(true)),
+        ]));
+        assert_eq!(request.additional_fields, Some(expected));
+    }
+
+    #[test]
+    fn null_extra_sends_no_additional_fields() {
+        let request = SdkRequest::try_from(&request_with_extra(serde_json::Value::Null)).unwrap();
+
+        assert_eq!(request.additional_fields, None);
+    }
+
+    #[test]
+    fn extra_that_is_not_an_object_is_an_invalid_request() {
+        let result = SdkRequest::try_from(&request_with_extra(serde_json::json!("low")));
+
+        assert!(matches!(result, Err(LlmError::ValidationError(_))));
     }
 
     #[test]
