@@ -7,5 +7,7 @@ edition = "2024"
 async-trait = { workspace = true }
 aws-config = { version = "1.12.0", features = ["behavior-version-latest"] }
 aws-sdk-bedrockruntime = "1.146.0"
+aws-smithy-types = "1.8.1"
 futures = { workspace = true }
 llm-core = { version = "0.1.0", path = "../llm-core" }
+serde_json = { workspace = true }
