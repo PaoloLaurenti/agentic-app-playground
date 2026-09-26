@@ -92,21 +92,28 @@ pub enum LlmEvent {
 }
 
 /// Errors grouped by what the caller can do about them: retry, fix the request, or fix the
-/// configuration.
+/// configuration. A provider returns them after its own retries have run out.
 #[derive(Debug, thiserror::Error)]
 pub enum LlmError {
+    /// Too many requests or tokens for the quota. Retryable, later or on another model.
     #[error("throttled: {0}")]
     Throttled(String),
+    /// The model is not ready to serve yet. Retryable.
     #[error("model not ready: {0}")]
     ModelNotReady(String),
+    /// A transient failure of the provider or of the network. Retryable.
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
+    /// The request is wrong: a bug to fix, not to retry.
     #[error("invalid request: {0}")]
     ValidationError(String),
+    /// Credentials, permissions or model access: a configuration to fix, not to retry.
     #[error("access denied: {0}")]
     AccessDenied(String),
+    /// The input does not fit the model's context window: shorten it, do not retry it as is.
     #[error("context too long: {0}")]
     ContextTooLong(String),
+    /// Anything else.
     #[error("{0}")]
     Other(String),
 }
