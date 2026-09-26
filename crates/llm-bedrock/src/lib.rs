@@ -3,9 +3,10 @@
 use std::fmt::Display;
 use std::time::Duration;
 
+use aws_config::retry::RetryConfig;
 use aws_config::{BehaviorVersion, Region};
-use aws_sdk_bedrockruntime::error::DisplayErrorContext;
-use aws_sdk_bedrockruntime::operation::converse::ConverseOutput;
+use aws_sdk_bedrockruntime::error::{DisplayErrorContext, SdkError};
+use aws_sdk_bedrockruntime::operation::converse::{ConverseError, ConverseOutput};
 use aws_sdk_bedrockruntime::types as sdk;
 use futures::stream::BoxStream;
 use llm_core::{
@@ -27,6 +28,14 @@ impl BedrockClient {
     pub async fn new(region: impl Into<String>) -> Self {
         let config = aws_config::defaults(BehaviorVersion::latest())
             .region(Region::new(region.into()))
+            // The SDK retries throttling and transient errors with exponential backoff and
+            // jitter. These are its standard values, written out so that they are visible.
+            .retry_config(
+                RetryConfig::standard()
+                    .with_max_attempts(3)
+                    .with_initial_backoff(Duration::from_secs(1))
+                    .with_max_backoff(Duration::from_secs(20)),
+            )
             .load()
             .await;
         Self {
@@ -64,8 +73,7 @@ impl LlmClient for BedrockClient {
             )
             .send()
             .await
-            // Every SDK error lands in `Other` for now: telling them apart is step 4.4.
-            .map_err(|err| LlmError::Other(DisplayErrorContext(&err).to_string()))?;
+            .map_err(from_sdk_error)?;
 
         from_sdk_output(&output)
     }
@@ -81,6 +89,52 @@ impl LlmClient for BedrockClient {
 /// A request the SDK refuses to build is a bug in the request, not something to retry.
 fn invalid(err: impl Display) -> LlmError {
     LlmError::ValidationError(err.to_string())
+}
+
+/// Maps an error that is left after the SDK's own retries.
+fn from_sdk_error(err: SdkError<ConverseError>) -> LlmError {
+    match err {
+        SdkError::ServiceError(context) => from_converse_error(context.into_err()),
+        other => {
+            let message = DisplayErrorContext(&other).to_string();
+            match &other {
+                SdkError::TimeoutError(_) => LlmError::ServiceUnavailable(message),
+                SdkError::DispatchFailure(failure) if failure.is_io() || failure.is_timeout() => {
+                    LlmError::ServiceUnavailable(message)
+                }
+                _ => LlmError::Other(message),
+            }
+        }
+    }
+}
+
+/// Maps an exception returned by Bedrock. The `Display` of an exception is its name followed by
+/// its message, which is short enough for logs.
+fn from_converse_error(err: ConverseError) -> LlmError {
+    let message = err.to_string();
+    match err {
+        ConverseError::ThrottlingException(_) => LlmError::Throttled(message),
+        ConverseError::ModelNotReadyException(_) => LlmError::ModelNotReady(message),
+        ConverseError::ServiceUnavailableException(_)
+        | ConverseError::InternalServerException(_)
+        | ConverseError::ModelTimeoutException(_) => LlmError::ServiceUnavailable(message),
+        ConverseError::AccessDeniedException(_) => LlmError::AccessDenied(message),
+        ConverseError::ValidationException(ref exception)
+            if exception.message().is_some_and(is_context_too_long) =>
+        {
+            LlmError::ContextTooLong(message)
+        }
+        ConverseError::ValidationException(_) | ConverseError::ResourceNotFoundException(_) => {
+            LlmError::ValidationError(message)
+        }
+        _ => LlmError::Other(message),
+    }
+}
+
+/// Bedrock reports an input that does not fit the context window as a plain validation error:
+/// only its message tells the two apart.
+fn is_context_too_long(message: &str) -> bool {
+    message.to_lowercase().contains("too long")
 }
 
 fn cache_point() -> Result<sdk::CachePointBlock, LlmError> {
@@ -264,6 +318,85 @@ mod tests {
             }
         );
         assert_eq!(response.latency, Duration::from_millis(700));
+    }
+
+    #[test]
+    fn bedrock_exceptions_map_to_what_the_caller_can_do() {
+        use aws_sdk_bedrockruntime::types::error::{
+            AccessDeniedException, InternalServerException, ModelNotReadyException,
+            ResourceNotFoundException, ThrottlingException, ValidationException,
+        };
+
+        let throttled = ConverseError::ThrottlingException(
+            ThrottlingException::builder()
+                .message("Too many requests")
+                .build(),
+        );
+        let not_ready = ConverseError::ModelNotReadyException(
+            ModelNotReadyException::builder().message("Loading").build(),
+        );
+        let internal = ConverseError::InternalServerException(
+            InternalServerException::builder().message("Oops").build(),
+        );
+        let denied = ConverseError::AccessDeniedException(
+            AccessDeniedException::builder()
+                .message("Not available for this account")
+                .build(),
+        );
+        let invalid = ConverseError::ValidationException(
+            ValidationException::builder()
+                .message("The provided model identifier is invalid.")
+                .build(),
+        );
+        let not_found = ConverseError::ResourceNotFoundException(
+            ResourceNotFoundException::builder()
+                .message("Model not found")
+                .build(),
+        );
+
+        assert!(matches!(
+            from_converse_error(throttled),
+            LlmError::Throttled(message) if message.contains("Too many requests")
+        ));
+        assert!(matches!(
+            from_converse_error(not_ready),
+            LlmError::ModelNotReady(_)
+        ));
+        assert!(matches!(
+            from_converse_error(internal),
+            LlmError::ServiceUnavailable(_)
+        ));
+        assert!(matches!(
+            from_converse_error(denied),
+            LlmError::AccessDenied(_)
+        ));
+        assert!(matches!(
+            from_converse_error(invalid),
+            LlmError::ValidationError(_)
+        ));
+        assert!(matches!(
+            from_converse_error(not_found),
+            LlmError::ValidationError(_)
+        ));
+    }
+
+    #[test]
+    fn a_validation_error_about_the_input_length_means_context_too_long() {
+        use aws_sdk_bedrockruntime::types::error::ValidationException;
+
+        let too_long = ConverseError::ValidationException(
+            ValidationException::builder()
+                .message(
+                    "The model returned the following errors: \
+                     prompt is too long: 260024 tokens > 200000 maximum",
+                )
+                .build(),
+        );
+
+        assert!(matches!(
+            from_converse_error(too_long),
+            LlmError::ContextTooLong(_)
+        ));
     }
 
     #[test]
