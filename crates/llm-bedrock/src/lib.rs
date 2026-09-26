@@ -1,13 +1,17 @@
 //! The Amazon Bedrock implementation of [`llm_core::LlmClient`], over the Converse API.
 
-use std::fmt::Display;
+use std::error::Error;
+use std::fmt::{Debug, Display};
 use std::time::Duration;
 
 use aws_config::retry::RetryConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_bedrockruntime::error::{DisplayErrorContext, SdkError};
 use aws_sdk_bedrockruntime::operation::converse::{ConverseError, ConverseOutput};
+use aws_sdk_bedrockruntime::operation::converse_stream::ConverseStreamError;
 use aws_sdk_bedrockruntime::types as sdk;
+use aws_sdk_bedrockruntime::types::error::{ConverseStreamOutputError, ValidationException};
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use llm_core::{
     ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, Role,
@@ -52,37 +56,84 @@ impl BedrockClient {
 #[async_trait::async_trait]
 impl LlmClient for BedrockClient {
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
-        let max_tokens = i32::try_from(req.max_tokens).map_err(invalid)?;
-        let system = to_sdk_system(&req.system)?;
-        let messages = req
-            .messages
-            .iter()
-            .map(to_sdk_message)
-            .collect::<Result<Vec<_>, _>>()?;
-
+        let request = SdkRequest::try_from(&req)?;
         let output = self
             .client
             .converse()
             .model_id(req.model.as_str())
-            .set_system((!system.is_empty()).then_some(system))
-            .set_messages(Some(messages))
-            .inference_config(
-                sdk::InferenceConfiguration::builder()
-                    .max_tokens(max_tokens)
-                    .build(),
-            )
+            .set_system(request.system)
+            .set_messages(Some(request.messages))
+            .inference_config(request.inference_config)
             .send()
             .await
-            .map_err(from_sdk_error)?;
+            .map_err(|err| from_sdk_error(err, from_converse_error))?;
 
         from_sdk_output(&output)
     }
 
     async fn stream(
         &self,
-        _req: LlmRequest,
+        req: LlmRequest,
     ) -> Result<BoxStream<'static, Result<LlmEvent, LlmError>>, LlmError> {
-        Err(LlmError::Other("streaming is not implemented yet".into()))
+        let request = SdkRequest::try_from(&req)?;
+        let output = self
+            .client
+            .converse_stream()
+            .model_id(req.model.as_str())
+            .set_system(request.system)
+            .set_messages(Some(request.messages))
+            .inference_config(request.inference_config)
+            .send()
+            .await
+            .map_err(|err| from_sdk_error(err, from_converse_stream_error))?;
+
+        // The SDK hands out a receiver to pull events from, not a `Stream`: `unfold` turns one
+        // into the other. The state becomes `None` after an error, which ends the stream.
+        let events = futures::stream::unfold(Some(output.stream), |receiver| async move {
+            let mut receiver = receiver?;
+            loop {
+                match receiver.recv().await {
+                    Ok(Some(event)) => match from_stream_event(&event) {
+                        Ok(Some(event)) => return Some((Ok(event), Some(receiver))),
+                        Ok(None) => continue,
+                        Err(err) => return Some((Err(err), None)),
+                    },
+                    Ok(None) => return None,
+                    Err(err) => {
+                        return Some((Err(from_sdk_error(err, from_stream_output_error)), None));
+                    }
+                }
+            }
+        });
+        Ok(events.boxed())
+    }
+}
+
+/// The parts of a Converse request that `converse` and `converse_stream` share.
+struct SdkRequest {
+    system: Option<Vec<sdk::SystemContentBlock>>,
+    messages: Vec<sdk::Message>,
+    inference_config: sdk::InferenceConfiguration,
+}
+
+impl TryFrom<&LlmRequest> for SdkRequest {
+    type Error = LlmError;
+
+    fn try_from(req: &LlmRequest) -> Result<Self, LlmError> {
+        let system = to_sdk_system(&req.system)?;
+        let messages = req
+            .messages
+            .iter()
+            .map(to_sdk_message)
+            .collect::<Result<Vec<_>, _>>()?;
+        let max_tokens = i32::try_from(req.max_tokens).map_err(invalid)?;
+        Ok(Self {
+            system: (!system.is_empty()).then_some(system),
+            messages,
+            inference_config: sdk::InferenceConfiguration::builder()
+                .max_tokens(max_tokens)
+                .build(),
+        })
     }
 }
 
@@ -91,10 +142,15 @@ fn invalid(err: impl Display) -> LlmError {
     LlmError::ValidationError(err.to_string())
 }
 
-/// Maps an error that is left after the SDK's own retries.
-fn from_sdk_error(err: SdkError<ConverseError>) -> LlmError {
+/// Maps an error that is left after the SDK's own retries. Exceptions returned by Bedrock go to
+/// `from_service`; the rest are failures to reach it.
+fn from_sdk_error<E, R>(err: SdkError<E, R>, from_service: impl FnOnce(E) -> LlmError) -> LlmError
+where
+    E: Error + 'static,
+    R: Debug,
+{
     match err {
-        SdkError::ServiceError(context) => from_converse_error(context.into_err()),
+        SdkError::ServiceError(context) => from_service(context.into_err()),
         other => {
             let message = DisplayErrorContext(&other).to_string();
             match &other {
@@ -108,8 +164,11 @@ fn from_sdk_error(err: SdkError<ConverseError>) -> LlmError {
     }
 }
 
-/// Maps an exception returned by Bedrock. The `Display` of an exception is its name followed by
-/// its message, which is short enough for logs.
+// Bedrock has three error enums with nearly the same exceptions: one for `converse`, one for
+// starting `converse_stream`, and one for failures in the middle of a stream. Each gets its own
+// `match`, so that the compiler checks the variants of each. The `Display` of an exception is its
+// name followed by its message, which is short enough for logs.
+
 fn from_converse_error(err: ConverseError) -> LlmError {
     let message = err.to_string();
     match err {
@@ -119,13 +178,43 @@ fn from_converse_error(err: ConverseError) -> LlmError {
         | ConverseError::InternalServerException(_)
         | ConverseError::ModelTimeoutException(_) => LlmError::ServiceUnavailable(message),
         ConverseError::AccessDeniedException(_) => LlmError::AccessDenied(message),
-        ConverseError::ValidationException(ref exception)
-            if exception.message().is_some_and(is_context_too_long) =>
-        {
-            LlmError::ContextTooLong(message)
+        ConverseError::ValidationException(exception) => from_validation(&exception, message),
+        ConverseError::ResourceNotFoundException(_) => LlmError::ValidationError(message),
+        _ => LlmError::Other(message),
+    }
+}
+
+fn from_converse_stream_error(err: ConverseStreamError) -> LlmError {
+    let message = err.to_string();
+    match err {
+        ConverseStreamError::ThrottlingException(_) => LlmError::Throttled(message),
+        ConverseStreamError::ModelNotReadyException(_) => LlmError::ModelNotReady(message),
+        ConverseStreamError::ServiceUnavailableException(_)
+        | ConverseStreamError::InternalServerException(_)
+        | ConverseStreamError::ModelTimeoutException(_)
+        | ConverseStreamError::ModelStreamErrorException(_) => {
+            LlmError::ServiceUnavailable(message)
         }
-        ConverseError::ValidationException(_) | ConverseError::ResourceNotFoundException(_) => {
-            LlmError::ValidationError(message)
+        ConverseStreamError::AccessDeniedException(_) => LlmError::AccessDenied(message),
+        ConverseStreamError::ValidationException(exception) => from_validation(&exception, message),
+        ConverseStreamError::ResourceNotFoundException(_) => LlmError::ValidationError(message),
+        _ => LlmError::Other(message),
+    }
+}
+
+/// A failure after the stream has started. The SDK does not retry it: part of the reply has
+/// already arrived, so the caller decides.
+fn from_stream_output_error(err: ConverseStreamOutputError) -> LlmError {
+    let message = err.to_string();
+    match err {
+        ConverseStreamOutputError::ThrottlingException(_) => LlmError::Throttled(message),
+        ConverseStreamOutputError::ServiceUnavailableException(_)
+        | ConverseStreamOutputError::InternalServerException(_)
+        | ConverseStreamOutputError::ModelStreamErrorException(_) => {
+            LlmError::ServiceUnavailable(message)
+        }
+        ConverseStreamOutputError::ValidationException(exception) => {
+            from_validation(&exception, message)
         }
         _ => LlmError::Other(message),
     }
@@ -133,8 +222,15 @@ fn from_converse_error(err: ConverseError) -> LlmError {
 
 /// Bedrock reports an input that does not fit the context window as a plain validation error:
 /// only its message tells the two apart.
-fn is_context_too_long(message: &str) -> bool {
-    message.to_lowercase().contains("too long")
+fn from_validation(exception: &ValidationException, message: String) -> LlmError {
+    let too_long = exception
+        .message()
+        .is_some_and(|text| text.to_lowercase().contains("too long"));
+    if too_long {
+        LlmError::ContextTooLong(message)
+    } else {
+        LlmError::ValidationError(message)
+    }
 }
 
 fn cache_point() -> Result<sdk::CachePointBlock, LlmError> {
@@ -178,26 +274,57 @@ fn from_sdk_output(output: &ConverseOutput) -> Result<LlmResponse, LlmError> {
     let Some(sdk::ConverseOutput::Message(message)) = output.output() else {
         return Err(LlmError::Other("the response contains no message".into()));
     };
-    let usage = output
-        .usage()
-        .ok_or_else(|| LlmError::Other("the response contains no token usage".into()))?;
     let metrics = output
         .metrics()
         .ok_or_else(|| LlmError::Other("the response contains no metrics".into()))?;
-    let latency_ms = u64::try_from(metrics.latency_ms())
-        .map_err(|_| LlmError::Other(format!("negative latency {}", metrics.latency_ms())))?;
 
     Ok(LlmResponse {
         message: from_sdk_message(message)?,
         stop_reason: from_sdk_stop_reason(output.stop_reason()),
-        usage: Usage {
-            input_tokens: token_count(usage.input_tokens())?,
-            output_tokens: token_count(usage.output_tokens())?,
-            cache_read_tokens: token_count(usage.cache_read_input_tokens().unwrap_or(0))?,
-            cache_write_tokens: token_count(usage.cache_write_input_tokens().unwrap_or(0))?,
-        },
-        latency: Duration::from_millis(latency_ms),
+        usage: from_sdk_usage(output.usage())?,
+        latency: latency(metrics.latency_ms())?,
     })
+}
+
+/// Translates one stream event. Only text, the stop reason and the final counts matter for now;
+/// the other events, such as the start and end of a block, give `None`.
+fn from_stream_event(event: &sdk::ConverseStreamOutput) -> Result<Option<LlmEvent>, LlmError> {
+    match event {
+        sdk::ConverseStreamOutput::ContentBlockDelta(delta) => match delta.delta() {
+            Some(sdk::ContentBlockDelta::Text(text)) => Ok(Some(LlmEvent::TextDelta(text.clone()))),
+            _ => Ok(None),
+        },
+        sdk::ConverseStreamOutput::MessageStop(stop) => Ok(Some(LlmEvent::Stop(
+            from_sdk_stop_reason(stop.stop_reason()),
+        ))),
+        sdk::ConverseStreamOutput::Metadata(metadata) => {
+            let metrics = metadata
+                .metrics()
+                .ok_or_else(|| LlmError::Other("the stream metadata contains no metrics".into()))?;
+            Ok(Some(LlmEvent::Metadata {
+                usage: from_sdk_usage(metadata.usage())?,
+                latency: latency(metrics.latency_ms())?,
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn from_sdk_usage(usage: Option<&sdk::TokenUsage>) -> Result<Usage, LlmError> {
+    let usage =
+        usage.ok_or_else(|| LlmError::Other("the response contains no token usage".into()))?;
+    Ok(Usage {
+        input_tokens: token_count(usage.input_tokens())?,
+        output_tokens: token_count(usage.output_tokens())?,
+        cache_read_tokens: token_count(usage.cache_read_input_tokens().unwrap_or(0))?,
+        cache_write_tokens: token_count(usage.cache_write_input_tokens().unwrap_or(0))?,
+    })
+}
+
+fn latency(milliseconds: i64) -> Result<Duration, LlmError> {
+    u64::try_from(milliseconds)
+        .map(Duration::from_millis)
+        .map_err(|_| LlmError::Other(format!("negative latency {milliseconds}")))
 }
 
 fn from_sdk_message(message: &sdk::Message) -> Result<Message, LlmError> {
@@ -324,7 +451,7 @@ mod tests {
     fn bedrock_exceptions_map_to_what_the_caller_can_do() {
         use aws_sdk_bedrockruntime::types::error::{
             AccessDeniedException, InternalServerException, ModelNotReadyException,
-            ResourceNotFoundException, ThrottlingException, ValidationException,
+            ResourceNotFoundException, ThrottlingException,
         };
 
         let throttled = ConverseError::ThrottlingException(
@@ -382,8 +509,6 @@ mod tests {
 
     #[test]
     fn a_validation_error_about_the_input_length_means_context_too_long() {
-        use aws_sdk_bedrockruntime::types::error::ValidationException;
-
         let too_long = ConverseError::ValidationException(
             ValidationException::builder()
                 .message(
@@ -397,6 +522,103 @@ mod tests {
             from_converse_error(too_long),
             LlmError::ContextTooLong(_)
         ));
+    }
+
+    #[test]
+    fn a_failure_in_the_middle_of_a_stream_maps_like_the_others() {
+        use aws_sdk_bedrockruntime::types::error::{
+            ModelStreamErrorException, ThrottlingException,
+        };
+
+        let throttled = ConverseStreamOutputError::ThrottlingException(
+            ThrottlingException::builder().message("Slow down").build(),
+        );
+        let broken = ConverseStreamOutputError::ModelStreamErrorException(
+            ModelStreamErrorException::builder()
+                .message("An error occurred while streaming")
+                .build(),
+        );
+
+        assert!(matches!(
+            from_stream_output_error(throttled),
+            LlmError::Throttled(_)
+        ));
+        assert!(matches!(
+            from_stream_output_error(broken),
+            LlmError::ServiceUnavailable(_)
+        ));
+    }
+
+    #[test]
+    fn stream_events_become_text_deltas_a_stop_and_the_final_counts() {
+        let text = sdk::ConverseStreamOutput::ContentBlockDelta(
+            sdk::ContentBlockDeltaEvent::builder()
+                .content_block_index(0)
+                .delta(sdk::ContentBlockDelta::Text("Rea".into()))
+                .build()
+                .unwrap(),
+        );
+        let reasoning = sdk::ConverseStreamOutput::ContentBlockDelta(
+            sdk::ContentBlockDeltaEvent::builder()
+                .content_block_index(0)
+                .delta(sdk::ContentBlockDelta::ReasoningContent(
+                    sdk::ReasoningContentBlockDelta::Text("Thinking".into()),
+                ))
+                .build()
+                .unwrap(),
+        );
+        let start = sdk::ConverseStreamOutput::MessageStart(
+            sdk::MessageStartEvent::builder()
+                .role(sdk::ConversationRole::Assistant)
+                .build()
+                .unwrap(),
+        );
+        let stop = sdk::ConverseStreamOutput::MessageStop(
+            sdk::MessageStopEvent::builder()
+                .stop_reason(sdk::StopReason::MaxTokens)
+                .build()
+                .unwrap(),
+        );
+        let metadata = sdk::ConverseStreamOutput::Metadata(
+            sdk::ConverseStreamMetadataEvent::builder()
+                .usage(
+                    sdk::TokenUsage::builder()
+                        .input_tokens(15)
+                        .output_tokens(5)
+                        .total_tokens(20)
+                        .build()
+                        .unwrap(),
+                )
+                .metrics(
+                    sdk::ConverseStreamMetrics::builder()
+                        .latency_ms(650)
+                        .build()
+                        .unwrap(),
+                )
+                .build(),
+        );
+
+        assert_eq!(
+            from_stream_event(&text).unwrap(),
+            Some(LlmEvent::TextDelta("Rea".into()))
+        );
+        assert_eq!(from_stream_event(&reasoning).unwrap(), None);
+        assert_eq!(from_stream_event(&start).unwrap(), None);
+        assert_eq!(
+            from_stream_event(&stop).unwrap(),
+            Some(LlmEvent::Stop(StopReason::MaxTokens))
+        );
+        assert_eq!(
+            from_stream_event(&metadata).unwrap(),
+            Some(LlmEvent::Metadata {
+                usage: Usage {
+                    input_tokens: 15,
+                    output_tokens: 5,
+                    ..Usage::default()
+                },
+                latency: Duration::from_millis(650),
+            })
+        );
     }
 
     #[test]
