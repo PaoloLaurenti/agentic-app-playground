@@ -14,6 +14,8 @@ use llm_core::{
     ContentBlock, LlmClient, LlmEvent, LlmRequest, Message, ModelId, Role, StopReason, SystemBlock,
     Usage,
 };
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 #[derive(Parser)]
 #[command(about = "The agentic app playground")]
@@ -81,6 +83,7 @@ struct Measure {
 #[tokio::main]
 async fn main() -> Result<()> {
     load_env_file()?;
+    init_logging();
     match Cli::parse().command {
         Command::Hello(args) => hello(args).await,
     }
@@ -94,6 +97,18 @@ fn load_env_file() -> Result<()> {
         Err(err) if err.not_found() => Ok(()),
         Err(err) => Err(err).context("cannot read .env"),
     }
+}
+
+/// Logs go to standard error, so that the reply on standard output stays clean. `RUST_LOG` picks
+/// what to show (`info`, with the AWS configuration quieter, by default); every span prints one line when it closes, with its fields.
+fn init_logging() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,aws_config=warn"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_span_events(FmtSpan::CLOSE)
+        .with_writer(std::io::stderr)
+        .init();
 }
 
 fn required_env(name: &str) -> Result<String> {
