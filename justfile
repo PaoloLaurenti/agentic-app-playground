@@ -7,6 +7,8 @@ check:
 test:
     cargo nextest run
 
-# The CLI, with arguments passed through: `just run hello --times 5`.
+# The CLI, with arguments passed through: `just run hello --times 5`. Positional arguments keep
+# a quoted value such as `--message "Hello there"` in one piece.
+[positional-arguments]
 run *args:
-    cargo run -q -p app -- {{args}}
+    cargo run -q -p app -- "$@"
