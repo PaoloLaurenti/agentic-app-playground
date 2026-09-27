@@ -12,3 +12,4 @@ llm-bedrock = { version = "0.1.0", path = "../llm-bedrock" }
 llm-core = { version = "0.1.0", path = "../llm-core" }
 serde_json = { workspace = true }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
