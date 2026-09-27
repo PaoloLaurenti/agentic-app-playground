@@ -10,6 +10,7 @@ use aws_config::{BehaviorVersion, Region};
 use aws_sdk_bedrockruntime::error::{DisplayErrorContext, SdkError};
 use aws_sdk_bedrockruntime::operation::converse::{ConverseError, ConverseOutput};
 use aws_sdk_bedrockruntime::operation::converse_stream::ConverseStreamError;
+use aws_sdk_bedrockruntime::primitives::event_stream::EventReceiver;
 use aws_sdk_bedrockruntime::types as sdk;
 use aws_sdk_bedrockruntime::types::error::{ConverseStreamOutputError, ValidationException};
 use aws_smithy_types::{Document, Number};
@@ -19,6 +20,7 @@ use llm_core::{
     ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, Role,
     StopReason, SystemBlock, Usage,
 };
+use tracing::{Instrument, Span, field};
 
 /// A Bedrock Runtime client for one region.
 ///
@@ -58,7 +60,62 @@ impl BedrockClient {
 #[async_trait::async_trait]
 impl LlmClient for BedrockClient {
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
-        let request = SdkRequest::try_from(&req)?;
+        let span = call_span(&req, "converse");
+        let result = self.converse(&req).instrument(span.clone()).await;
+        match &result {
+            Ok(response) => {
+                record_usage(&span, &response.usage, response.latency);
+                record_stop(&span, &response.stop_reason);
+            }
+            Err(err) => record_error(&span, err),
+        }
+        result
+    }
+
+    async fn stream(
+        &self,
+        req: LlmRequest,
+    ) -> Result<BoxStream<'static, Result<LlmEvent, LlmError>>, LlmError> {
+        let span = call_span(&req, "converse_stream");
+        let receiver = match self.start_stream(&req).instrument(span.clone()).await {
+            Ok(receiver) => receiver,
+            Err(err) => {
+                record_error(&span, &err);
+                return Err(err);
+            }
+        };
+
+        // The SDK hands out a receiver to pull events from, not a `Stream`: `unfold` turns one
+        // into the other. The span travels in the state, so it stays open, and records the final
+        // counts, until the stream ends; the state becomes `None` after an error, which ends it.
+        let events = futures::stream::unfold(Some((receiver, span)), |state| async move {
+            let (mut receiver, span) = state?;
+            match next_event(&mut receiver).instrument(span.clone()).await? {
+                Ok(event) => {
+                    match &event {
+                        LlmEvent::Stop(reason) => record_stop(&span, reason),
+                        LlmEvent::Metadata { usage, latency } => {
+                            record_usage(&span, usage, *latency)
+                        }
+                        LlmEvent::TextDelta(_) => {}
+                    }
+                    Some((Ok(event), Some((receiver, span))))
+                }
+                Err(err) => {
+                    record_error(&span, &err);
+                    Some((Err(err), None))
+                }
+            }
+        });
+        Ok(events.boxed())
+    }
+}
+
+type StreamReceiver = EventReceiver<sdk::ConverseStreamOutput, ConverseStreamOutputError>;
+
+impl BedrockClient {
+    async fn converse(&self, req: &LlmRequest) -> Result<LlmResponse, LlmError> {
+        let request = SdkRequest::try_from(req)?;
         let output = self
             .client
             .converse()
@@ -70,15 +127,11 @@ impl LlmClient for BedrockClient {
             .send()
             .await
             .map_err(|err| from_sdk_error(err, from_converse_error))?;
-
         from_sdk_output(&output)
     }
 
-    async fn stream(
-        &self,
-        req: LlmRequest,
-    ) -> Result<BoxStream<'static, Result<LlmEvent, LlmError>>, LlmError> {
-        let request = SdkRequest::try_from(&req)?;
+    async fn start_stream(&self, req: &LlmRequest) -> Result<StreamReceiver, LlmError> {
+        let request = SdkRequest::try_from(req)?;
         let output = self
             .client
             .converse_stream()
@@ -90,27 +143,63 @@ impl LlmClient for BedrockClient {
             .send()
             .await
             .map_err(|err| from_sdk_error(err, from_converse_stream_error))?;
-
-        // The SDK hands out a receiver to pull events from, not a `Stream`: `unfold` turns one
-        // into the other. The state becomes `None` after an error, which ends the stream.
-        let events = futures::stream::unfold(Some(output.stream), |receiver| async move {
-            let mut receiver = receiver?;
-            loop {
-                match receiver.recv().await {
-                    Ok(Some(event)) => match from_stream_event(&event) {
-                        Ok(Some(event)) => return Some((Ok(event), Some(receiver))),
-                        Ok(None) => continue,
-                        Err(err) => return Some((Err(err), None)),
-                    },
-                    Ok(None) => return None,
-                    Err(err) => {
-                        return Some((Err(from_sdk_error(err, from_stream_output_error)), None));
-                    }
-                }
-            }
-        });
-        Ok(events.boxed())
+        Ok(output.stream)
     }
+}
+
+/// The next event worth passing on, skipping the ones `from_stream_event` ignores; `None` when
+/// the stream is over.
+async fn next_event(receiver: &mut StreamReceiver) -> Option<Result<LlmEvent, LlmError>> {
+    loop {
+        match receiver.recv().await {
+            Ok(Some(event)) => match from_stream_event(&event) {
+                Ok(Some(event)) => return Some(Ok(event)),
+                Ok(None) => continue,
+                Err(err) => return Some(Err(err)),
+            },
+            Ok(None) => return None,
+            Err(err) => return Some(Err(from_sdk_error(err, from_stream_output_error))),
+        }
+    }
+}
+
+// One span per call. The counts are declared empty and recorded when the response arrives; the
+// span closes when the call or the stream is over, and the subscriber prints it with its fields.
+// In Module 5 the same span becomes a Langfuse generation.
+
+fn call_span(req: &LlmRequest, operation: &'static str) -> Span {
+    tracing::info_span!(
+        "llm_call",
+        model = req.model.as_str(),
+        operation,
+        input_tokens = field::Empty,
+        output_tokens = field::Empty,
+        cache_read_tokens = field::Empty,
+        cache_write_tokens = field::Empty,
+        latency_ms = field::Empty,
+        stop_reason = field::Empty,
+    )
+}
+
+fn record_usage(span: &Span, usage: &Usage, latency: Duration) {
+    span.record("input_tokens", usage.input_tokens);
+    span.record("output_tokens", usage.output_tokens);
+    span.record("cache_read_tokens", usage.cache_read_tokens);
+    span.record("cache_write_tokens", usage.cache_write_tokens);
+    span.record(
+        "latency_ms",
+        u64::try_from(latency.as_millis()).unwrap_or(u64::MAX),
+    );
+}
+
+fn record_stop(span: &Span, reason: &StopReason) {
+    span.record("stop_reason", field::debug(reason));
+}
+
+/// The error's text starts with its kind (`throttled:`, `invalid request:`…), so the kinds are
+/// told apart in the logs.
+fn record_error(span: &Span, err: &LlmError) {
+    span.in_scope(|| tracing::error!(error = %err, "the call failed"));
 }
 
 /// The parts of a Converse request that `converse` and `converse_stream` share.
