@@ -65,6 +65,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dotenvy",
+ "futures",
  "llm-bedrock",
  "llm-core",
  "serde_json",

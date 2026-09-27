@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 dotenvy = "0.15.7"
+futures = { workspace = true }
 llm-bedrock = { version = "0.1.0", path = "../llm-bedrock" }
 llm-core = { version = "0.1.0", path = "../llm-core" }
 serde_json = { workspace = true }
