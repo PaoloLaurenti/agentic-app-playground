@@ -281,7 +281,7 @@ Every entry points to the step whose paragraph explains it. The foundations are 
   - **Cancelling is dropping.** A future that nobody polls any more simply stops at its last `.await`, with no exception. Timeouts become easy (`tokio::time::timeout` drops the future when time runs out), but whatever the future had half done stays half done, which is why writes must be atomic or idempotent (9.6).
 
   Never block a runtime thread with slow synchronous work, such as a long computation or `std::thread::sleep`: every other future on that thread stops too.
-- [ ] 4.9 🧪 Streaming from the CLI: print tokens as they arrive. Measure **time to first token** and total time. Compare them with the non-streaming call.
+- [X] 4.9 🧪 Streaming from the CLI: print tokens as they arrive. Measure **time to first token** and total time. Compare them with the non-streaming call.
 - [ ] 4.10 Add `tracing`, which records spans and events, and `tracing-subscriber`, which prints them: one span per call with `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `latency_ms` and `stop_reason` fields. In Module 5 these spans become Langfuse *generations* without touching `llm-bedrock`.
 
   💡 **How tracing works.** `tracing` separates recording from printing. The code records *spans*, intervals of time with a name and fields (`llm_call` with `model`, `input_tokens`…), and *events*, points in time inside a span (a warning, a retry). A span opened inside another becomes its child, so one request produces a tree, and that tree is what Langfuse shows as a trace. Where the records go is decided elsewhere, by a *subscriber* made of *layers*: `tracing-subscriber` prints them on the terminal, and in Module 5 a second layer turns the same spans into OpenTelemetry spans for Langfuse without changing a line of `llm-bedrock`. That separation is the reason to instrument with `tracing` rather than calling Langfuse directly. ⚠️ In async code a span must be attached to the future (`.instrument(span)` or `#[instrument]`), never held open across an `.await` with `span.enter()`: while the future is paused, other work running on the same thread would be recorded inside it.
@@ -866,7 +866,7 @@ Append one entry per working session. A few lines: what you did, what you learne
 - Next step: repeat on a dataset once Langfuse experiments are available (Module 11), measuring format compliance as well as correctness.
 
 ### 2026-09-27
-- Did: implemented `app hello` (4.8) with a hardcoded EU price table, a `just run` recipe, and a synthetic system prompt in `crates/app/fixtures/clinic-guidelines.md` to test caching. The binary refuses a non-EU region or model id.
+- Did: implemented `app hello` (4.8) with a hardcoded EU price table, a `just run` recipe, and a synthetic system prompt in `crates/app/fixtures/clinic-guidelines.md` to test caching. The binary refuses a non-EU region or model id. Added `--stream` to `app hello` (4.9), and fixed the `run` recipe, which split a quoted argument such as `--message "…"` into separate words.
 - Learned: the cache prices of Sonnet 4.6 in the AWS Price List match the standard ratios: 4.125 USD per million tokens to write (6.60 for one hour) and 0.33 to read, against 3.30 for input.
 - Open questions: why Sonnet 5 is not available (support case 179026551500718). The budget filter check is still open.
 
@@ -878,3 +878,12 @@ Append one entry per working session. A few lines: what you did, what you learne
 - Results: scenario 1, Bedrock latency 509–660 ms (mean 560 ms); the first call took 1,282 ms end to end against 557–705 ms for the others; no cache, since 15 input tokens are far below the minimum. Scenario 2, the first call wrote 2,184 tokens to the cache and calls 2 to 5 read them, at 0.0009 USD per call instead of 0.0092; Bedrock latency 698–1,341 ms, wider than Haiku's. Scenario 3, 2,196 input tokens at full price on every call and no cache: the prompt is above Sonnet 4.6's minimum and below Haiku 4.5's. About 0.03 USD in total. No infrastructure errors.
 - Conclusion: identical calls vary by about ±15% on Haiku, and the first call of a process pays about 700 ms of setup that Bedrock does not see. The cache works from the second call when the prefix is long enough for the model, and at this size it cuts cost, not latency. Aside, one message only: with a system prompt saying to answer in the person's language, Haiku answered "Ready." and Sonnet 4.6 "Pronto.".
 - Next step: measure time to first token with streaming (4.9).
+
+### EXP-003 · Streaming against a full reply · 2026-09-27
+- Question: what does streaming change in the time to the first text and in the total time?
+- Variable changed (exactly one): `--stream`.
+- Configuration: `just run hello` on Haiku 4.5, no system prompt. Short reply: "Write three short sentences about why a clinic should publish its opening hours online.", `max_tokens` 300, 5 calls per mode. Long reply: "Write about 250 words on how a fictional clinic could make its booking process easier for patients.", `max_tokens` 800, 3 calls per mode.
+- Langfuse dataset run: none yet (Langfuse arrives in Module 5).
+- Results: short reply (68–116 output tokens), total time mean 1,498 ms without streaming and 1,824 ms with it; first token usually after 476–601 ms. Long reply (about 355 output tokens), total time mean 4,330 ms without streaming and 4,401 ms with it; first token usually after 560–640 ms. The first call of each run had its first token at about 1.2 s (client setup, as in EXP-002), and one call at 1.8 s. Output lengths vary between calls, so total times compare only roughly. Less than 0.01 USD. No infrastructure errors.
+- Conclusion: streaming does not shorten the reply, since the total time stays within the noise, but the first text appears after about 0.6 s instead of 4.3 s on a long reply, seven times sooner, and the gain grows with the length of the reply.
+- Next step: record these timings as spans with `tracing` (4.10), so that Module 5 shows them in Langfuse.
