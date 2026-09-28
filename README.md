@@ -40,7 +40,7 @@ text. `GUARDRAILS` validates the reply and, when needed, triggers a regeneration
 
 - Stable Rust (the version is pinned in `.tool-versions`, managed with asdf)
 - AWS CLI v2 and an AWS account with access to Amazon Bedrock in an EU region
-- A Langfuse account (EU cloud region) or Docker for local self-hosting
+- A Langfuse account in the EU cloud region
 
 ## Getting started
 

@@ -26,7 +26,7 @@ Inspired by an internal Mia Clinic document, taken as a starting point rather th
 - **Synthetic data only.** The domain is healthcare, but real patient data never enters the
   repository, not even anonymized. This covers datasets, prompts, examples, tests and traces.
 - **EU only.** Bedrock exclusively through `eu.*` inference profiles: never `us.*`, never
-  `global.*`. The same applies to observability: Langfuse Cloud EU region, or self-hosted in the EU.
+  `global.*`. The same applies to observability: Langfuse Cloud EU region only.
 - **No secrets in the repository.** `.env` is git-ignored; `.env.example` documents the variables
   without values. Keys and credentials never land in code, tests or commits.
 - **No agent framework in the core.** The harness is written by hand: that is the thing being

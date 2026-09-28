@@ -60,7 +60,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 | Provider | Amazon Bedrock through the **Converse API** with the official AWS SDK for Rust | Converse is Bedrock's unified API: the same types for every model, plus tool use, streaming, caching and structured output. |
 | Region | An **EU** region (`eu-west-1` or `eu-central-1`) and `eu.*` inference profiles | Data residency (GDPR). See Module 3. |
 | Models | The Claude family on Bedrock as the baseline, plus at least one non-Anthropic model (Amazon Nova, Llama, Mistral) so that comparison and routing are meaningful | A router and an evaluation suite only make sense with real alternatives. |
-| LLM engineering platform | **Langfuse**, used across all four of its areas: tracing, prompt management, evaluation (datasets, experiments, LLM-as-a-judge, annotations), dashboards and alerts | It is open source, has an EU cloud region and can be self-hosted; it integrates from Rust over OpenTelemetry and its public API. See Module 5. |
+| LLM engineering platform | **Langfuse**, used across all four of its areas: tracing, prompt management, evaluation (datasets, experiments, LLM-as-a-judge, annotations), dashboards and alerts | It is open source and has an EU cloud region; it integrates from Rust over OpenTelemetry and its public API. See Module 5. |
 | Agent frameworks | **None** in the core: the harness is written by hand. Rig (the most mature Rust framework) is an optional comparison in Module 16 | Writing the loop once is the fastest way to understand what frameworks do for you. |
 | Persistence | SQLite locally (`rusqlite` or `sqlx`), PostgreSQL with `pgvector` when vector search is needed | Easy to start, realistic for production. |
 
@@ -241,17 +241,14 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 ⏱ 4–6 hours.
 
-**Goal.** A live Langfuse project (EU cloud region, or self-hosted locally), the Rust app exporting every call as a *generation* with tokens, cost, model and latency, and you being able to read a trace.
+**Goal.** A live Langfuse project in the EU cloud region, the Rust app exporting every call as a *generation* with tokens, cost, model and latency, and you being able to read a trace.
 
 **Why it matters.** From here on, every experiment in this tutorial is read in Langfuse, not in the logs. Seeing the calls while you learn shortens the feedback loop more than any amount of reading. And it is the tool you want to master.
 
 ### Steps
 
 - [ ] 5.1 📚 🔭 **The data model.** Read [Observability Data Model](https://langfuse.com/docs/observability/data-model) in the Langfuse docs. Fix these in your mind: **trace** (one end-to-end request, with `input`, `output`, `user_id`, `session_id`, `tags`, `metadata`, `release`, `version`, `environment`), **observation** (span, generation, event, plus the agentic types agent/tool/chain/retriever/evaluator; nestable), **generation** (one model call: model, parameters, usage, cost, linked prompt), **score** (numeric, categorical or boolean; on a trace, an observation or a session), **session** (several traces from the same conversation), **dataset** and **dataset run** (you meet these in Module 11).
-- [ ] 5.2 🔭 **Decide where Langfuse runs.** Two routes, both fine for learning:
-  - **Langfuse Cloud, EU region** (`https://cloud.langfuse.com`, data in Ireland `eu-west-1`, the same geography as your Bedrock). Zero infrastructure, and the free tier is enough for this tutorial.
-  - **Self-hosted locally** with Docker Compose: `web` and `worker` components, PostgreSQL, ClickHouse, Redis/Valkey, S3/MinIO. Useful for understanding the architecture (asynchronous queue-based ingestion, analytics on ClickHouse) and for Module 15, where you evaluate self-hosting on AWS.
-  Recommendation: start on EU Cloud and do the local self-host as a Module 15 experiment. Write the choice in an ADR with "data residency" as the rationale.
+- [ ] 5.2 🔭 **Where Langfuse runs.** Langfuse Cloud, EU region (`https://cloud.langfuse.com`, data in Ireland `eu-west-1`, the same geography as your Bedrock). Zero infrastructure, and the free tier is enough for this tutorial. Self-hosting is out of scope for this project: running Langfuse teaches its architecture, not agentic applications. Check the free plan's limits and write the choice in an ADR with "data residency" as the rationale.
 - [ ] 5.3 🔭 Create an organization and a **project** (`agentic-playground`). Generate an **API key** pair (public and secret) and put them in `.env`. Langfuse keys are per project: different environments (local, dev, prod) can be different projects **or** the same project with an `environment` attribute on traces. For this tutorial use one project plus `environment`.
 - [ ] 5.4 🔭 **Models and prices.** Langfuse computes cost from `usage` only if it knows the model. Under *Settings → Models*, add definitions for your Bedrock model ids (matched by a regex on the name, for example `(?i)^eu\.anthropic\.claude-haiku-4-5.*`) with per-token prices for input, output, cache read and cache write, taken from 3.11. Without this step you will see tokens but no cost.
 - [ ] 5.5 💡 **How you reach Langfuse from Rust.** Langfuse has no official Rust SDK; it has two doors open to any language: the **OpenTelemetry endpoint** (`/api/public/otel`, OTLP over HTTP, Basic authentication with `public:secret`) and the **public REST API**. Use OTel for tracing and the API for prompts, datasets, scores and experiments. Useful crates: [`opentelemetry-langfuse`](https://github.com/genai-rs/opentelemetry-langfuse) (a builder for an OTLP exporter preconfigured for Langfuse) and [`langfuse-ergonomic`](https://github.com/genai-rs/langfuse-ergonomic) (a public-API client with builders, on top of the OpenAPI-generated [`langfuse-client-base`](https://github.com/genai-rs/langfuse-client-base)).
@@ -272,7 +269,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 **Self-check.** Why do trace attributes (`session.id`, `user.id`, `tags`) belong on the root span and not only on a generation? What is the difference between one Langfuse project per environment and a single project with an `environment` attribute?
 
-**Going deeper.** The [OpenTelemetry](https://langfuse.com/integrations/native/opentelemetry) and [Observability Data Model](https://langfuse.com/docs/observability/data-model) pages in the Langfuse docs; the READMEs of the [`opentelemetry-langfuse`](https://github.com/genai-rs/opentelemetry-langfuse) and [`langfuse-ergonomic`](https://github.com/genai-rs/langfuse-ergonomic) crates; [Self-hosting](https://langfuse.com/self-hosting) for the v3 architecture.
+**Going deeper.** The [OpenTelemetry](https://langfuse.com/integrations/native/opentelemetry) and [Observability Data Model](https://langfuse.com/docs/observability/data-model) pages in the Langfuse docs; the READMEs of the [`opentelemetry-langfuse`](https://github.com/genai-rs/opentelemetry-langfuse) and [`langfuse-ergonomic`](https://github.com/genai-rs/langfuse-ergonomic) crates.
 
 ---
 
@@ -514,7 +511,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 - [ ] 13.2 💡 **Prompt injection.** Defences: clear delimitation of data (XML tags), system prompt instructions to treat that content as data, least privilege for tools (a tool cannot do more than it needs to), human confirmation for irreversible actions, output validation before execution or display. No defence is complete: hence the layers and the regression dataset (12.9).
 - [ ] 13.3 💡 **Bedrock Guardrails.** Create a guardrail with content filters, denied topics (for example "diagnosis"), a PII filter with masking, and a grounding check (is the output supported by the source?). Apply it with `ApplyGuardrail` to input and output as a layer **on top of** your own LLM `GUARDRAILS`. Compare: what does one catch that the other does not? What cost and latency does it add? 🔭 The outcome is one more score on the trace (`bedrock_guardrail_action`).
 - [ ] 13.4 💡 🔭 **Personal data in prompts and in traces.** Minimize what enters the prompt; pseudonymize identifiers (the `user.id` in Langfuse must never be a real identifier); apply **PII redaction before export** in traces (a function in `observability`, switched on per environment through configuration, covering names, phone numbers, emails and national identifiers; for free text consider a small model or the Bedrock Guardrails PII API); set **retention** per Langfuse project; document the data flow (who sees what, in which region). Bedrock does not use your data to train models and does not retain it beyond the request, except for logging you enable yourself: revisit the choice from 3.9.
-- [ ] 13.5 💡 🔭 **Data residency.** Only `eu.*` inference profiles; no feature that routes outside the EU; Langfuse Cloud EU region or self-hosted in the EU (Module 15); verify where logs, traces, datasets and exports end up. Write it all in an ADR: it will be the basis of the legal review.
+- [ ] 13.5 💡 🔭 **Data residency.** Only `eu.*` inference profiles; no feature that routes outside the EU; Langfuse Cloud EU region (5.2); verify where logs, traces, datasets and exports end up. Write it all in an ADR: it will be the basis of the legal review.
 - [ ] 13.6 💡 **Least-privilege IAM.** Replace `AmazonBedrockFullAccess` with a policy scoped to the ARNs of the inference profiles you use; apply it to your own identity and to the CI role from 12.4; the deployed app gets its own role in Module 15 (15.5). No static access keys anywhere.
 - [ ] 13.7 💡 🔭 **Secrets and Langfuse access.** separate Langfuse API keys for your machine, CI and, from Module 15, the deployed app, which reads them from Secrets Manager; in Langfuse, members with minimal roles (who can move `production` on prompts, who can see traces with content); the `production` label **protected**.
 - [ ] 13.8 💡 **Abuse and cost.** Per-user rate limiting (`governor` in axum), a maximum message length, a cost ceiling per session and per day, alerts on anomalies (one user generating 30% of the cost: the Langfuse *Users* view shows it).
@@ -547,7 +544,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 - [ ] 14.8 🔭 **Continuous human review.** An annotation queue, "weekly clinical review", fed automatically with traces where `guardrail_pass = false`, where feedback is negative, or where the judge's score is below threshold. A person labels them; comparing human labels against the judge keeps the judge calibrated over time (11.7).
 - [ ] 14.9 💡 **Drift.** Weekly, compare online scores and distributions (reply length, escalation rate, cost per message) against the previous release's baseline: a change with no deployment of your own is almost always a change in the model or in a prompt. Comparing dataset runs (12.7) confirms or refutes it.
 - [ ] 14.10 💡 **The rest of the infrastructure.** Langfuse specializes in the LLM; CPU, memory, databases, queues and HTTP latency live elsewhere (in this company: Datadog). Two ways to correlate: (a) use the **OpenTelemetry Collector** as a fan-out, with the app sending traces to the collector and the collector forwarding to both Langfuse and Datadog (the same traces, with identical `trace_id`, in two places); (b) export aggregate metrics from Langfuse through the **Metrics API** into the existing monitoring system. Try (a): it is the pattern that lets you change backends without touching the app.
-- [ ] 14.11 💡 🔭 **Langfuse volume and cost.** Estimate traces per month and observations per trace; check the Cloud plan's limits or size the self-hosted deployment; set retention; use **batch export** (to S3) for historical offline analysis.
+- [ ] 14.11 💡 🔭 **Langfuse volume and cost.** Estimate traces per month and observations per trace; check the Cloud plan's limits; set retention; use **batch export** (to S3) for historical offline analysis.
 - [ ] 14.12 Write a short runbook: "latency is rising" → what to look at in Langfuse and Datadog; "guardrails fire more often" → compare prompt version and model over the last hours; "cost has doubled" → cost-per-role dashboard, then *Users*; "the online score is dropping" → last regression run, last deployment, last label move.
 - [ ] 14.13 🧪 Try debugging one conversation: from a `trace_id`, reconstruct every step, the exact prompts (with versions, clickable from the generation), the router's decisions and the cost. If you cannot do it in five minutes, something is missing from the instrumentation.
 
@@ -563,7 +560,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 ⏱ 8–12 hours.
 
-**Goal.** The application running on AWS with IAM roles rather than keys, per-environment configuration, working streaming, gradual rollout, cost controls; plus a reasoned decision about where Langfuse runs.
+**Goal.** The application running on AWS with IAM roles rather than keys, per-environment configuration, working streaming, gradual rollout, cost controls; plus Langfuse Cloud reviewed for production traces.
 
 **Why it matters.** Many of the choices made so far (streaming, timeouts, caching, quotas, trace volume) can only be measured with a real deployment and some load.
 
@@ -572,10 +569,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 - [ ] 15.1 **Packaging.** A multi-stage Dockerfile for Rust (build in a toolchain image, run on `distroless` or `debian-slim`), an optimized binary (`--release`, LTO), a small image. Vulnerability scanning (`cargo deny`, an image scanner).
 - [ ] 15.2 💡 **Twelve-factor configuration.** Everything from environment variables or Parameter Store: region, model ids per role, context budgets, router thresholds, Langfuse host and keys, tracing policy (content, sampling). No `if env == prod` in the code.
 - [ ] 15.3 💡 **Where to run the app.** Evaluate three options and choose with an ADR: **ECS Fargate** (an always-on HTTP service, natural SSE streaming, the sensible default); **AWS Lambda** with `cargo-lambda` (great for spiky load; ⚠️ response streaming, timeouts and **flushing OTel traces** before the invocation ends all need verification); **Bedrock AgentCore Runtime** (a managed environment for agents, with a Gateway for tools, Memory, Policy with Guardrails and built-in Observability: useful for seeing what a managed runtime buys you).
-- [ ] 15.4 💡 🔭 **Where to run Langfuse.** Two options, ADR required:
-  - **Langfuse Cloud, EU region**: no operations, data in Ireland, compliance documented by the vendor; to be reviewed with legal as a sub-processor.
-  - **Self-hosted on AWS EU**: `web` and `worker` on ECS, PostgreSQL on RDS, ClickHouse (self-managed on EC2/EKS, or ClickHouse Cloud in an EU region), Redis on ElastiCache, S3 for blobs and exports. Maximum control over the data, but upgrades, backups and capacity are yours.
-  🧪 Do the **local** self-host with Docker Compose at least once, to touch the components and understand what running them involves.
+- [ ] 15.4 💡 🔭 **Langfuse in production.** Langfuse Cloud, EU region, stays: no operations, data in Ireland, compliance documented by the vendor. Review it with legal as a sub-processor (data processing agreement, data regions, retention) and choose the plan from the 14.11 estimate. Update the ADR from 5.2.
 - [ ] 15.5 **Identity.** An IAM role for the task or function with the least-privilege policy from Module 13. No credentials in the image. Langfuse keys from Secrets Manager.
 - [ ] 15.6 **The server.** `axum` with health checks (`/healthz`, `/readyz`), graceful shutdown (finish in-flight requests, cancel background tasks sensibly, **flush the OTel exporter**), a per-request timeout, body size limits, per-user rate limiting, and CORS if needed.
 - [ ] 15.7 **State.** SQLite is not enough for a multi-instance production: managed PostgreSQL (RDS) with `pgvector` for the knowledge base. Versioned migrations (`sqlx migrate`).
@@ -587,7 +581,7 @@ Almost every topic in this tutorial shows up in that pipeline: different prompts
 
 **Done when** the app answers in production with streaming, traces arrive in Langfuse with `environment = prod`, alerts are active, and you have rolled back a prompt at least once by moving a label.
 
-**Self-check.** Why must the active prompt version be a label rather than code? What are the hidden costs of self-hosting Langfuse?
+**Self-check.** Why must the active prompt version be a label rather than code? What must be reviewed before Langfuse Cloud receives production traces?
 
 ---
 
@@ -670,7 +664,6 @@ To explore once the core is solid. Each one is a small experiment with a card in
 - Evaluation: [overview](https://langfuse.com/docs/evaluation/overview), [concepts](https://langfuse.com/docs/evaluation/core-concepts), [LLM-as-a-Judge](https://langfuse.com/docs/evaluation/evaluation-methods/llm-as-a-judge), [annotation queues](https://langfuse.com/docs/evaluation/evaluation-methods/annotation-queues)
 - Dashboards and alerts: [custom dashboards](https://langfuse.com/docs/metrics/features/custom-dashboards), [alerts](https://langfuse.com/docs/observability/features/alerts), [Metrics API](https://langfuse.com/docs/metrics/features/metrics-api)
 - [Public API](https://langfuse.com/docs/api-and-data-platform/features/public-api)
-- [Self-hosting](https://langfuse.com/self-hosting) (v3 architecture, Docker Compose, Helm)
 - [Data regions](https://langfuse.com/security/data-regions) and [EU data residency and GDPR](https://langfuse.com/resources/engineering/langfuse-eu-data-residency-gdpr)
 - [Changelog](https://langfuse.com/changelog) (features move fast)
 - Rust crates from the genai-rs organization: [`opentelemetry-langfuse`](https://github.com/genai-rs/opentelemetry-langfuse), [`langfuse-ergonomic`](https://github.com/genai-rs/langfuse-ergonomic), [`langfuse-client-base`](https://github.com/genai-rs/langfuse-client-base)
