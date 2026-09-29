@@ -16,11 +16,15 @@ tracing, prompt management and evaluation, not to run infrastructure.
    region as Bedrock, and no infrastructure to run.
 2. Self-hosted with Docker Compose, locally or later on AWS EU: `web` and `worker`, PostgreSQL,
    ClickHouse, Redis/Valkey and S3/MinIO, all to install, upgrade and back up.
+3. LangSmith, from LangChain, with an EU region on GCP (`eu.smith.langchain.com`): closed
+   source, and its extra over Langfuse is managed deployment of LangGraph agents.
 
 ## Decision
 
 Option 1, for the whole tutorial. It meets data residency with nothing to operate. Self-hosting
-teaches the Langfuse architecture, not agentic applications, and is not pursued. The free Hobby
+teaches the Langfuse architecture, not agentic applications, and is not pursued. LangSmith's
+tracing, evaluation and prompt management match what the tutorial uses from Langfuse, and its
+managed deployment does not apply to a hand-written Rust harness deployed on AWS. The free Hobby
 plan is enough: 50,000 units a month, where a unit is a trace, an observation or a score, 30
 days of data access and 2 users (langfuse.com/pricing, 2026-09-28).
 
