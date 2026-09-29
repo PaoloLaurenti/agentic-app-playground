@@ -101,6 +101,7 @@ Every entry points to the step whose paragraph explains it. The foundations are 
 | Repetitions and confidence intervals | 11.9 |
 | OIDC federation between CI and AWS | 12.4 |
 | Health data under the GDPR | 13.4 |
+| Durable execution: workflows, activities, event history | 16.1 |
 
 ---
 
