@@ -30,7 +30,7 @@ Inspired by an internal Mia Clinic document, taken as a starting point rather th
 - **No secrets in the repository.** `.env` is git-ignored; `.env.example` documents the variables
   without values. Keys and credentials never land in code, tests or commits.
 - **No agent framework in the core.** The harness is written by hand: that is the thing being
-  learned. Rig is an optional comparison (Module 16), not a dependency of the path.
+  learned. Rig and Temporal are optional comparisons (Module 16), not dependencies of the path.
 - **One change at a time.** When measuring anything (prompt, model, effort), change a single
   variable and record the result. This is a working rule, not just a methodological one.
 - **Create things when they are needed.** No crate, folder, dependency, `just` recipe,
