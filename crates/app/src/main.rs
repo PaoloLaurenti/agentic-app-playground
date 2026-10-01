@@ -14,8 +14,7 @@ use llm_core::{
     ContentBlock, LlmClient, LlmEvent, LlmRequest, Message, ModelId, Role, StopReason, SystemBlock,
     Usage,
 };
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt::format::FmtSpan;
+use observability::{Config, LangfuseConfig, Telemetry};
 
 #[derive(Parser)]
 #[command(about = "The agentic app playground")]
@@ -83,10 +82,13 @@ struct Measure {
 #[tokio::main]
 async fn main() -> Result<()> {
     load_env_file()?;
-    init_logging();
-    match Cli::parse().command {
+    let telemetry = init_telemetry()?;
+    let result = match Cli::parse().command {
         Command::Hello(args) => hello(args).await,
-    }
+    };
+    // On failure too: the spans of a failed call are the ones worth reading.
+    telemetry.shutdown()?;
+    result
 }
 
 /// Loads `.env` when it exists. Without it the environment must already hold the variables, as
@@ -99,16 +101,48 @@ fn load_env_file() -> Result<()> {
     }
 }
 
-/// Logs go to standard error, so that the reply on standard output stays clean. `RUST_LOG` picks
-/// what to show (`info`, with the AWS configuration quieter, by default); every span prints one line when it closes, with its fields.
-fn init_logging() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,aws_config=warn"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_span_events(FmtSpan::CLOSE)
-        .with_writer(std::io::stderr)
-        .init();
+/// The EU region of Langfuse Cloud, the only one AGENTS.md allows.
+const LANGFUSE_EU_HOST: &str = "https://cloud.langfuse.com";
+
+/// Spans are always printed, and exported to Langfuse only when its keys are set: without them,
+/// as in CI, the program runs the same.
+fn init_telemetry() -> Result<Telemetry> {
+    let langfuse = match (
+        optional_env("LANGFUSE_PUBLIC_KEY"),
+        optional_env("LANGFUSE_SECRET_KEY"),
+    ) {
+        (Some(public_key), Some(secret_key)) => {
+            let host = required_env("LANGFUSE_HOST")?;
+            // The EU-only rule again, for the traces this time.
+            ensure!(
+                host.trim_end_matches('/') == LANGFUSE_EU_HOST,
+                "LANGFUSE_HOST {host} is not the EU region {LANGFUSE_EU_HOST}"
+            );
+            Some(LangfuseConfig {
+                host,
+                public_key,
+                secret_key,
+            })
+        }
+        (None, None) => None,
+        // One key without the other is a configuration mistake, not a choice to stop exporting.
+        _ => bail!("set both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY, or neither"),
+    };
+    let exporting = langfuse.is_some();
+    let telemetry = observability::init(Config {
+        service_name: "app",
+        exported_targets: &["app", "llm_bedrock"],
+        langfuse,
+    })?;
+    if !exporting {
+        tracing::warn!("the Langfuse keys are not set: spans are not exported");
+    }
+    Ok(telemetry)
+}
+
+/// A variable that may be missing; an empty value counts as missing.
+fn optional_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
 fn required_env(name: &str) -> Result<String> {
