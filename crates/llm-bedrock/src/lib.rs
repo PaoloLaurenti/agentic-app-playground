@@ -20,7 +20,6 @@ use llm_core::{
     ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, Role,
     StopReason, SystemBlock, Usage,
 };
-use tracing::{Instrument, Span, field};
 
 /// A Bedrock Runtime client for one region.
 ///
@@ -60,51 +59,22 @@ impl BedrockClient {
 #[async_trait::async_trait]
 impl LlmClient for BedrockClient {
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
-        let span = call_span(&req, "converse");
-        let result = self.converse(&req).instrument(span.clone()).await;
-        match &result {
-            Ok(response) => {
-                record_usage(&span, &response.usage, response.latency);
-                record_stop(&span, &response.stop_reason);
-            }
-            Err(err) => record_error(&span, err),
-        }
-        result
+        self.converse(&req).await
     }
 
     async fn stream(
         &self,
         req: LlmRequest,
     ) -> Result<BoxStream<'static, Result<LlmEvent, LlmError>>, LlmError> {
-        let span = call_span(&req, "converse_stream");
-        let receiver = match self.start_stream(&req).instrument(span.clone()).await {
-            Ok(receiver) => receiver,
-            Err(err) => {
-                record_error(&span, &err);
-                return Err(err);
-            }
-        };
+        let receiver = self.start_stream(&req).await?;
 
         // The SDK hands out a receiver to pull events from, not a `Stream`: `unfold` turns one
-        // into the other. The span travels in the state, so it stays open, and records the final
-        // counts, until the stream ends; the state becomes `None` after an error, which ends it.
-        let events = futures::stream::unfold(Some((receiver, span)), |state| async move {
-            let (mut receiver, span) = state?;
-            match next_event(&mut receiver).instrument(span.clone()).await? {
-                Ok(event) => {
-                    match &event {
-                        LlmEvent::Stop(reason) => record_stop(&span, reason),
-                        LlmEvent::Metadata { usage, latency } => {
-                            record_usage(&span, usage, *latency)
-                        }
-                        LlmEvent::TextDelta(_) => {}
-                    }
-                    Some((Ok(event), Some((receiver, span))))
-                }
-                Err(err) => {
-                    record_error(&span, &err);
-                    Some((Err(err), None))
-                }
+        // into the other. The state becomes `None` after an error, which ends the stream.
+        let events = futures::stream::unfold(Some(receiver), |state| async move {
+            let mut receiver = state?;
+            match next_event(&mut receiver).await? {
+                Ok(event) => Some((Ok(event), Some(receiver))),
+                Err(err) => Some((Err(err), None)),
             }
         });
         Ok(events.boxed())
@@ -161,45 +131,6 @@ async fn next_event(receiver: &mut StreamReceiver) -> Option<Result<LlmEvent, Ll
             Err(err) => return Some(Err(from_sdk_error(err, from_stream_output_error))),
         }
     }
-}
-
-// One span per call. The counts are declared empty and recorded when the response arrives; the
-// span closes when the call or the stream is over, and the subscriber prints it with its fields.
-// In Module 5 the same span becomes a Langfuse generation.
-
-fn call_span(req: &LlmRequest, operation: &'static str) -> Span {
-    tracing::info_span!(
-        "llm_call",
-        model = req.model.as_str(),
-        operation,
-        input_tokens = field::Empty,
-        output_tokens = field::Empty,
-        cache_read_tokens = field::Empty,
-        cache_write_tokens = field::Empty,
-        latency_ms = field::Empty,
-        stop_reason = field::Empty,
-    )
-}
-
-fn record_usage(span: &Span, usage: &Usage, latency: Duration) {
-    span.record("input_tokens", usage.input_tokens);
-    span.record("output_tokens", usage.output_tokens);
-    span.record("cache_read_tokens", usage.cache_read_tokens);
-    span.record("cache_write_tokens", usage.cache_write_tokens);
-    span.record(
-        "latency_ms",
-        u64::try_from(latency.as_millis()).unwrap_or(u64::MAX),
-    );
-}
-
-fn record_stop(span: &Span, reason: &StopReason) {
-    span.record("stop_reason", field::debug(reason));
-}
-
-/// The error's text starts with its kind (`throttled:`, `invalid request:`…), so the kinds are
-/// told apart in the logs.
-fn record_error(span: &Span, err: &LlmError) {
-    span.in_scope(|| tracing::error!(error = %err, "the call failed"));
 }
 
 /// The parts of a Converse request that `converse` and `converse_stream` share.

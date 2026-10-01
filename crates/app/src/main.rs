@@ -14,7 +14,7 @@ use llm_core::{
     ContentBlock, LlmClient, LlmEvent, LlmRequest, Message, ModelId, Role, StopReason, SystemBlock,
     Usage,
 };
-use observability::{Config, LangfuseConfig, Telemetry};
+use observability::{Config, LangfuseConfig, Telemetry, TracedClient};
 
 #[derive(Parser)]
 #[command(about = "The agentic app playground")]
@@ -131,7 +131,7 @@ fn init_telemetry() -> Result<Telemetry> {
     let exporting = langfuse.is_some();
     let telemetry = observability::init(Config {
         service_name: "app",
-        exported_targets: &["app", "llm_bedrock"],
+        exported_targets: &["app", "observability"],
         langfuse,
     })?;
     if !exporting {
@@ -186,7 +186,7 @@ async fn hello(args: HelloArgs) -> Result<()> {
 
     // Built once and reused by every call: loading the configuration and the credentials is the
     // expensive part.
-    let client = BedrockClient::new(region).await;
+    let client = TracedClient::new(BedrockClient::new(region).await);
     println!("model: {model}");
 
     let mut measures = Vec::new();

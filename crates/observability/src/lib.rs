@@ -4,6 +4,7 @@
 //! The rest of the code only uses `tracing`: which backend receives the spans is decided here.
 
 mod generation;
+mod traced_client;
 
 use std::collections::HashMap;
 
@@ -20,7 +21,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
-pub use generation::{record_completion_start, record_generation, record_generation_error};
+pub use traced_client::TracedClient;
 
 /// What the logs show when `RUST_LOG` is not set: `aws_config` at `info` prints the whole
 /// credential chain on every run.
@@ -142,6 +143,7 @@ mod test_support {
 
     /// A span as it would have left for Langfuse.
     pub struct ExportedSpan {
+        pub name: String,
         pub attributes: HashMap<String, String>,
     }
 
@@ -160,6 +162,7 @@ mod test_support {
             .unwrap()
             .into_iter()
             .map(|span| ExportedSpan {
+                name: span.name.to_string(),
                 attributes: span
                     .attributes
                     .iter()

@@ -11,4 +11,3 @@ aws-smithy-types = "1.8.1"
 futures = { workspace = true }
 llm-core = { version = "0.1.0", path = "../llm-core" }
 serde_json = { workspace = true }
-tracing = "0.1.44"
