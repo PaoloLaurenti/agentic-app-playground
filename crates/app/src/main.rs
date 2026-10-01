@@ -69,6 +69,7 @@ impl ModelRole {
 
 /// What one call produced and how long it took.
 struct Measure {
+    reply: String,
     stop_reason: StopReason,
     usage: Usage,
     /// The latency Bedrock reports, which excludes the network and the client's own setup.
@@ -194,11 +195,7 @@ async fn hello(args: HelloArgs) -> Result<()> {
     let mut measures = Vec::new();
     for call in 1..=args.times {
         println!("\ncall {call}");
-        let measure = if args.stream {
-            call_streaming(&client, request.clone()).await?
-        } else {
-            call_complete(&client, request.clone()).await?
-        };
+        let measure = make_call(&client, request.clone(), &args.message, args.stream).await?;
         print_measure(&model, &measure);
         measures.push(measure);
     }
@@ -206,6 +203,29 @@ async fn hello(args: HelloArgs) -> Result<()> {
         print_summary(&measures)?;
     }
     Ok(())
+}
+
+/// One call is one trace. Its root span shows the user message as input and the reply as output,
+/// the two things a reviewer reads first; `input.value` and `output.value` are the OpenInference
+/// names for them, which Langfuse understands.
+#[tracing::instrument(
+    name = "hello",
+    skip_all,
+    fields(input.value = message, output.value = tracing::field::Empty)
+)]
+async fn make_call(
+    client: &dyn LlmClient,
+    request: LlmRequest,
+    message: &str,
+    stream: bool,
+) -> Result<Measure> {
+    let measure = if stream {
+        call_streaming(client, request).await?
+    } else {
+        call_complete(client, request).await?
+    };
+    tracing::Span::current().record("output.value", measure.reply.as_str());
+    Ok(measure)
 }
 
 async fn call_complete(client: &dyn LlmClient, request: LlmRequest) -> Result<Measure> {
@@ -225,6 +245,7 @@ async fn call_complete(client: &dyn LlmClient, request: LlmRequest) -> Result<Me
     println!("  reply:       {reply}");
 
     Ok(Measure {
+        reply,
         stop_reason: response.stop_reason,
         usage: response.usage,
         bedrock_latency: response.latency,
@@ -239,6 +260,7 @@ async fn call_streaming(client: &dyn LlmClient, request: LlmRequest) -> Result<M
     let started = Instant::now();
     let mut events = client.stream(request).await?;
 
+    let mut reply = String::new();
     let mut first_token = None;
     let mut stop_reason = None;
     let mut metadata = None;
@@ -250,6 +272,7 @@ async fn call_streaming(client: &dyn LlmClient, request: LlmRequest) -> Result<M
                 print!("{text}");
                 // Without a flush the terminal would show the text only at the end of the line.
                 std::io::stdout().flush()?;
+                reply.push_str(&text);
             }
             LlmEvent::Stop(reason) => stop_reason = Some(reason),
             LlmEvent::Metadata { usage, latency } => metadata = Some((usage, latency)),
@@ -261,6 +284,7 @@ async fn call_streaming(client: &dyn LlmClient, request: LlmRequest) -> Result<M
     let stop_reason = stop_reason.context("the stream ended without a stop reason")?;
     let (usage, bedrock_latency) = metadata.context("the stream ended without token counts")?;
     Ok(Measure {
+        reply,
         stop_reason,
         usage,
         bedrock_latency,
