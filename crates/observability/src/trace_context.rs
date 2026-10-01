@@ -11,14 +11,40 @@ use opentelemetry::{Context, KeyValue};
 use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::trace::{Span, SpanData, SpanProcessor};
 
-/// Adds the environment, the release and the trace name to every span when it starts. The
-/// trace name is the root span's own name, so the code that opens spans does nothing for it.
+/// Adds the environment and the release to every span when it starts, and copies the root
+/// span's name, session and user onto every span below it. The root declares the session and the
+/// user as the standard `session.id` and `user.id` fields, so the code that opens spans never
+/// names a Langfuse attribute.
 #[derive(Debug)]
 pub(crate) struct TraceContextProcessor {
     environment: String,
     release: String,
-    /// The name of every trace whose root span is still open.
-    trace_names: Mutex<HashMap<TraceId, String>>,
+    /// What every trace whose root span is still open shares with its spans.
+    traces: Mutex<HashMap<TraceId, TraceWide>>,
+}
+
+/// The attributes a root span hands down to the rest of its trace.
+#[derive(Debug, Clone)]
+struct TraceWide {
+    name: String,
+    session_id: Option<String>,
+    user_id: Option<String>,
+}
+
+impl TraceWide {
+    fn of_root(root: &SpanData) -> Self {
+        let attribute = |key: &str| {
+            root.attributes
+                .iter()
+                .find(|kv| kv.key.as_str() == key)
+                .map(|kv| kv.value.to_string())
+        };
+        Self {
+            name: root.name.to_string(),
+            session_id: attribute("session.id"),
+            user_id: attribute("user.id"),
+        }
+    }
 }
 
 impl TraceContextProcessor {
@@ -26,7 +52,7 @@ impl TraceContextProcessor {
         Self {
             environment,
             release,
-            trace_names: Mutex::new(HashMap::new()),
+            traces: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -43,27 +69,33 @@ impl SpanProcessor for TraceContextProcessor {
         let is_root = !cx.span().span_context().is_valid();
         // A poisoned lock only means another thread panicked while holding it; the map is
         // still usable, and tracing must never take the program down.
-        let mut trace_names = self
-            .trace_names
+        let mut traces = self
+            .traces
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let name = if is_root {
-            let name = span.exported_data().map(|data| data.name.into_owned());
-            if let Some(name) = &name {
-                trace_names.insert(trace_id, name.clone());
+        let trace_wide = if is_root {
+            let trace_wide = span.exported_data().map(|data| TraceWide::of_root(&data));
+            if let Some(trace_wide) = &trace_wide {
+                traces.insert(trace_id, trace_wide.clone());
             }
-            name
+            trace_wide
         } else {
-            trace_names.get(&trace_id).cloned()
+            traces.get(&trace_id).cloned()
         };
-        if let Some(name) = name {
-            span.set_attribute(KeyValue::new("langfuse.trace.name", name));
+        if let Some(trace_wide) = trace_wide {
+            span.set_attribute(KeyValue::new("langfuse.trace.name", trace_wide.name));
+            if let Some(session_id) = trace_wide.session_id {
+                span.set_attribute(KeyValue::new("langfuse.session.id", session_id));
+            }
+            if let Some(user_id) = trace_wide.user_id {
+                span.set_attribute(KeyValue::new("langfuse.user.id", user_id));
+            }
         }
     }
 
     fn on_end(&self, span: SpanData) {
         if span.parent_span_id == SpanId::INVALID {
-            self.trace_names
+            self.traces
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .remove(&span.span_context.trace_id());
@@ -146,6 +178,46 @@ mod tests {
             .map(|span| span.attributes["langfuse.trace.name"].as_str())
             .collect();
         assert_eq!(names, ["hello", "hello", "chat", "chat"]);
+    }
+
+    #[test]
+    fn the_root_hands_its_session_and_user_down_to_every_span() {
+        let provider = SdkTracerProvider::builder()
+            .with_span_processor(TraceContextProcessor::new("local".into(), "0.1.0".into()));
+
+        let spans = exported_spans_through(provider, || {
+            tracing::info_span!("chat", session.id = "chat-1", user.id = "synthetic-user-1")
+                .in_scope(|| {
+                    let _child = tracing::info_span!("call-model").entered();
+                });
+        });
+
+        assert_eq!(spans.len(), 2);
+        for span in &spans {
+            assert_eq!(
+                span.attributes["langfuse.session.id"], "chat-1",
+                "{}",
+                span.name
+            );
+            assert_eq!(
+                span.attributes["langfuse.user.id"], "synthetic-user-1",
+                "{}",
+                span.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_trace_without_session_or_user_gets_neither() {
+        let provider = SdkTracerProvider::builder()
+            .with_span_processor(TraceContextProcessor::new("local".into(), "0.1.0".into()));
+
+        let spans = exported_spans_through(provider, || {
+            let _root = tracing::info_span!("hello").entered();
+        });
+
+        assert!(!spans[0].attributes.contains_key("langfuse.session.id"));
+        assert!(!spans[0].attributes.contains_key("langfuse.user.id"));
     }
 
     #[test]
