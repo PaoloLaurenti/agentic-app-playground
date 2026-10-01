@@ -83,6 +83,14 @@ safety dataset, which stay in Italian because that is what the classifier must h
 
 **Conversation with the repository owner happens in Italian.**
 
+### Working with the repository owner
+
+- **Never commit or push without the owner's explicit permission.** This covers everything: code,
+  documentation, tutorial checkboxes and Work Log entries.
+- **Implement in small steps.** After each step, such as one crate, one wiring change or one ADR,
+  stop: leave the changes uncommitted, summarize them, and wait for the owner's review before
+  starting the next.
+
 ### Commit messages
 
 - In **English**, **imperative** mood: `Add`, `Fix`, `Rewrite`, `Move`. Never `Added`, `Adds`.
