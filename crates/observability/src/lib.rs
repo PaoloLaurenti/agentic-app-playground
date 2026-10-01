@@ -4,6 +4,7 @@
 //! The rest of the code only uses `tracing`: which backend receives the spans is decided here.
 
 mod generation;
+mod trace_context;
 mod traced_client;
 
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::{Protocol, WithExportConfig, WithHttpConfig};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
+use trace_context::{TraceContextProcessor, is_valid_environment};
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -33,6 +35,10 @@ pub struct LangfuseConfig {
     pub host: String,
     pub public_key: String,
     pub secret_key: String,
+    /// Keeps test traces apart from production ones, such as `local` or `production`.
+    pub environment: String,
+    /// The application's version, to compare traces before and after a change.
+    pub release: String,
 }
 
 pub struct Config<'a> {
@@ -47,6 +53,10 @@ pub struct Config<'a> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(
+        "environment {0:?} is not valid for Langfuse: lowercase letters, digits, - and _, at most 40, not starting with langfuse"
+    )]
+    InvalidEnvironment(String),
     #[error("cannot build the OTLP exporter: {0}")]
     Exporter(#[from] opentelemetry_otlp::ExporterBuildError),
     #[error("cannot install the tracing subscriber: {0}")]
@@ -111,6 +121,9 @@ fn tracer_provider(
     service_name: &'static str,
     langfuse: &LangfuseConfig,
 ) -> Result<SdkTracerProvider, Error> {
+    if !is_valid_environment(&langfuse.environment) {
+        return Err(Error::InvalidEnvironment(langfuse.environment.clone()));
+    }
     let credentials = BASE64.encode(format!("{}:{}", langfuse.public_key, langfuse.secret_key));
     let headers = HashMap::from([
         ("Authorization".to_owned(), format!("Basic {credentials}")),
@@ -128,6 +141,10 @@ fn tracer_provider(
         .with_headers(headers)
         .build()?;
     Ok(SdkTracerProvider::builder()
+        .with_span_processor(TraceContextProcessor::new(
+            langfuse.environment.clone(),
+            langfuse.release.clone(),
+        ))
         .with_batch_exporter(exporter)
         .with_resource(Resource::builder().with_service_name(service_name).build())
         .build())
@@ -138,7 +155,9 @@ mod test_support {
     use std::collections::HashMap;
 
     use opentelemetry::trace::TracerProvider as _;
-    use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+    use opentelemetry_sdk::trace::{
+        InMemorySpanExporter, SdkTracerProvider, TracerProviderBuilder,
+    };
     use tracing_subscriber::layer::SubscriberExt;
 
     /// A span as it would have left for Langfuse.
@@ -150,10 +169,16 @@ mod test_support {
     /// Runs `f` with an OpenTelemetry layer that exports to memory instead of the network, and
     /// returns the spans it closed.
     pub fn exported_spans(f: impl FnOnce()) -> Vec<ExportedSpan> {
+        exported_spans_through(SdkTracerProvider::builder(), f)
+    }
+
+    /// The same, with a provider that may already hold span processors of its own.
+    pub fn exported_spans_through(
+        provider: TracerProviderBuilder,
+        f: impl FnOnce(),
+    ) -> Vec<ExportedSpan> {
         let exporter = InMemorySpanExporter::default();
-        let provider = SdkTracerProvider::builder()
-            .with_simple_exporter(exporter.clone())
-            .build();
+        let provider = provider.with_simple_exporter(exporter.clone()).build();
         let subscriber = tracing_subscriber::registry()
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
         tracing::subscriber::with_default(subscriber, f);

@@ -122,6 +122,8 @@ fn init_telemetry() -> Result<Telemetry> {
                 host,
                 public_key,
                 secret_key,
+                environment: required_env("APP_ENVIRONMENT")?,
+                release: env!("CARGO_PKG_VERSION").to_owned(),
             })
         }
         (None, None) => None,
