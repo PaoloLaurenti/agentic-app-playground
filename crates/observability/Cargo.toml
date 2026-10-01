@@ -5,12 +5,18 @@ edition = "2024"
 
 [dependencies]
 base64 = "0.22.1"
+humantime = "2.4.0"
+llm-core = { version = "0.1.0", path = "../llm-core" }
 opentelemetry = "0.33.0"
 # Langfuse accepts OTLP over HTTP only, not gRPC. The blocking client runs on the batch
 # processor's own thread, and rustls gives it HTTPS.
 opentelemetry-otlp = { version = "0.33.0", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client", "reqwest-rustls"] }
 opentelemetry_sdk = "0.33.0"
+serde_json = { workspace = true }
 thiserror = "2.0.21"
 tracing = "0.1.44"
 tracing-opentelemetry = "0.34.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+opentelemetry_sdk = { version = "0.33.0", features = ["testing"] }

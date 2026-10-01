@@ -3,6 +3,8 @@
 //!
 //! The rest of the code only uses `tracing`: which backend receives the spans is decided here.
 
+mod generation;
+
 use std::collections::HashMap;
 
 use base64::Engine;
@@ -17,6 +19,8 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
+
+pub use generation::{record_completion_start, record_generation, record_generation_error};
 
 /// What the logs show when `RUST_LOG` is not set: `aws_config` at `info` prints the whole
 /// credential chain on every run.
@@ -126,4 +130,42 @@ fn tracer_provider(
         .with_batch_exporter(exporter)
         .with_resource(Resource::builder().with_service_name(service_name).build())
         .build())
+}
+
+#[cfg(test)]
+mod test_support {
+    use std::collections::HashMap;
+
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    /// A span as it would have left for Langfuse.
+    pub struct ExportedSpan {
+        pub attributes: HashMap<String, String>,
+    }
+
+    /// Runs `f` with an OpenTelemetry layer that exports to memory instead of the network, and
+    /// returns the spans it closed.
+    pub fn exported_spans(f: impl FnOnce()) -> Vec<ExportedSpan> {
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
+        tracing::subscriber::with_default(subscriber, f);
+        exporter
+            .get_finished_spans()
+            .unwrap()
+            .into_iter()
+            .map(|span| ExportedSpan {
+                attributes: span
+                    .attributes
+                    .iter()
+                    .map(|kv| (kv.key.to_string(), kv.value.to_string()))
+                    .collect(),
+            })
+            .collect()
+    }
 }
