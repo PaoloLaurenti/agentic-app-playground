@@ -307,7 +307,7 @@ Every entry points to the step whose paragraph explains it. The foundations are 
 
 - [X] 5.1 📚 🔭 **The data model.** Read [Observability Data Model](https://langfuse.com/docs/observability/data-model) in the Langfuse docs. Fix these in your mind: **trace** (one end-to-end request, with `input`, `output`, `user_id`, `session_id`, `tags`, `metadata`, `release`, `version`, `environment`), **observation** (span, generation, event, plus the agentic types agent/tool/chain/retriever/evaluator; nestable), **generation** (one model call: model, parameters, usage, cost, linked prompt), **score** (numeric, categorical or boolean; on a trace, an observation or a session), **session** (several traces from the same conversation), **dataset** and **dataset run** (you meet these in Module 11).
 - [X] 5.2 🔭 **Where Langfuse runs.** Langfuse Cloud, EU region (`https://cloud.langfuse.com`, data in Ireland `eu-west-1`, the same geography as your Bedrock). Zero infrastructure, and the free tier is enough for this tutorial. Self-hosting is out of scope for this project: running Langfuse teaches its architecture, not agentic applications. Check the free plan's limits and write the choice in an ADR with "data residency" as the rationale.
-- [ ] 5.3 🔭 Create an organization and a **project** (`agentic-playground`). Generate an **API key** pair (public and secret) and put them in `.env`. Langfuse keys are per project: different environments (local, dev, prod) can be different projects **or** the same project with an `environment` attribute on traces. For this tutorial use one project plus `environment`.
+- [X] 5.3 🔭 Create an organization and a **project** (`agentic-playground`). Generate an **API key** pair (public and secret) and put them in `.env`. Langfuse keys are per project: different environments (local, dev, prod) can be different projects **or** the same project with an `environment` attribute on traces. For this tutorial use one project plus `environment`.
 
   ⚠️ Sign up on `https://cloud.langfuse.com`, the EU region: the US region is `us.cloud.langfuse.com`, and an organization stays in the region where you create it.
 
@@ -891,3 +891,6 @@ Append one entry per working session. A few lines: what you did, what you learne
 
 ### 2026-09-28
 - Did: read the Langfuse data model (5.1). Chose Langfuse Cloud in the EU region, with no self-hosting, in ADR 0004 (5.2).
+
+### 2026-10-01
+- Did: created the Langfuse organization `mia-healthcare` and the project `agentic-playground` in the EU region with a work email, and verified the keys with `langfuse --env .env api projects list` (5.3).
