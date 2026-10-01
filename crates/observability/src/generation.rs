@@ -11,7 +11,7 @@ use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// Marks `span` as a generation and records the request and the response.
-pub fn record_generation(span: &Span, req: &LlmRequest, resp: &LlmResponse) {
+pub(crate) fn record_generation(span: &Span, req: &LlmRequest, resp: &LlmResponse) {
     record_request(span, req);
     span.set_attribute(
         "langfuse.observation.output",
@@ -33,14 +33,14 @@ pub fn record_generation(span: &Span, req: &LlmRequest, resp: &LlmResponse) {
 }
 
 /// Marks `span` as a failed generation: the request, the error level and the error text.
-pub fn record_generation_error(span: &Span, req: &LlmRequest, err: &LlmError) {
+pub(crate) fn record_generation_error(span: &Span, req: &LlmRequest, err: &LlmError) {
     record_request(span, req);
     span.set_attribute("langfuse.observation.level", "ERROR");
     span.set_attribute("langfuse.observation.status_message", err.to_string());
 }
 
 /// Records when the first token of a stream arrived, which Langfuse shows as time to first token.
-pub fn record_completion_start(span: &Span, at: SystemTime) {
+pub(crate) fn record_completion_start(span: &Span, at: SystemTime) {
     span.set_attribute(
         "langfuse.observation.completion_start_time",
         humantime::format_rfc3339_millis(at).to_string(),
