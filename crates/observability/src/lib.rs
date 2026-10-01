@@ -107,6 +107,12 @@ pub fn init(config: Config) -> Result<Telemetry, Error> {
         );
         tracing_opentelemetry::layer()
             .with_tracer(provider.tracer(config.service_name))
+            // Source location, thread, busy and idle time and target would only clutter the
+            // metadata of every observation in Langfuse.
+            .with_location(false)
+            .with_threads(false)
+            .with_tracked_inactivity(false)
+            .with_target(false)
             .with_filter(targets)
     });
 
