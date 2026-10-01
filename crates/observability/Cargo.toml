@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-trait = { workspace = true }
 base64 = "0.22.1"
+futures = { workspace = true }
 humantime = "2.4.0"
 llm-core = { version = "0.1.0", path = "../llm-core" }
 opentelemetry = "0.33.0"
@@ -20,3 +22,4 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [dev-dependencies]
 opentelemetry_sdk = { version = "0.33.0", features = ["testing"] }
+tokio = { version = "1.53.1", features = ["rt"] }
