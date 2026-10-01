@@ -77,9 +77,10 @@ dependencies = [
  "futures",
  "llm-bedrock",
  "llm-core",
+ "observability",
  "serde_json",
  "tokio",
- "tracing-subscriber",
+ "tracing",
 ]
 
 [[package]]
