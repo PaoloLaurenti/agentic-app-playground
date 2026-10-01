@@ -1,9 +1,10 @@
 //! The command-line entry point of the playground.
 
+mod chat;
 mod pricing;
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -27,6 +28,8 @@ struct Cli {
 enum Command {
     /// Call a model and print the reply, stop reason, tokens, latency and estimated cost.
     Hello(HelloArgs),
+    /// Hold a conversation read from standard input, one message per line.
+    Chat(chat::ChatArgs),
 }
 
 #[derive(Args)]
@@ -86,6 +89,7 @@ async fn main() -> Result<()> {
     let telemetry = init_telemetry()?;
     let result = match Cli::parse().command {
         Command::Hello(args) => hello(args).await,
+        Command::Chat(args) => chat::chat(args).await,
     };
     // On failure too: the spans of a failed call are the ones worth reading.
     telemetry.shutdown()?;
@@ -153,9 +157,10 @@ fn required_env(name: &str) -> Result<String> {
         .with_context(|| format!("{name} is not set: copy .env.example to .env and fill it in"))
 }
 
-async fn hello(args: HelloArgs) -> Result<()> {
+/// The region and the model id a role calls, from `.env`.
+fn bedrock_target(role: ModelRole) -> Result<(String, String)> {
     let region = required_env("AWS_REGION")?;
-    let model = required_env(args.model.env_var())?;
+    let model = required_env(role.env_var())?;
     // The EU-only rule of AGENTS.md, enforced where the configuration enters the program.
     ensure!(
         region.starts_with("eu-"),
@@ -164,18 +169,38 @@ async fn hello(args: HelloArgs) -> Result<()> {
     ensure!(
         model.starts_with("eu."),
         "{} = {model} is not an EU inference profile",
-        args.model.env_var()
+        role.env_var()
     );
+    Ok((region, model))
+}
+
+/// The text of a file as the system prompt, followed by a cache point; none without a file.
+fn system_prompt(path: Option<&Path>) -> Result<Vec<SystemBlock>> {
+    let Some(path) = path else {
+        return Ok(vec![]);
+    };
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    Ok(vec![SystemBlock::Text(text), SystemBlock::CachePoint])
+}
+
+/// The text of a message, without its cache points.
+fn text_of(message: &Message) -> String {
+    message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            ContentBlock::CachePoint => None,
+        })
+        .collect()
+}
+
+async fn hello(args: HelloArgs) -> Result<()> {
+    let (region, model) = bedrock_target(args.model)?;
     ensure!(args.times > 0, "--times must be at least 1");
 
-    let system = match &args.system {
-        Some(path) => {
-            let text = std::fs::read_to_string(path)
-                .with_context(|| format!("cannot read {}", path.display()))?;
-            vec![SystemBlock::Text(text), SystemBlock::CachePoint]
-        }
-        None => vec![],
-    };
+    let system = system_prompt(args.system.as_deref())?;
     let request = LlmRequest {
         model: ModelId::new(&model),
         system,
@@ -233,15 +258,7 @@ async fn call_complete(client: &dyn LlmClient, request: LlmRequest) -> Result<Me
     let response = client.complete(request).await?;
     let end_to_end = started.elapsed();
 
-    let reply: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text.as_str()),
-            ContentBlock::CachePoint => None,
-        })
-        .collect();
+    let reply = text_of(&response.message);
     println!("  reply:       {reply}");
 
     Ok(Measure {
