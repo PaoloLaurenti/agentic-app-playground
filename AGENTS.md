@@ -120,6 +120,12 @@ Every non-trivial decision becomes an ADR in `docs/adr/`, numbered sequentially,
 
 ### Tests
 
+**Code is written test-driven.** Before any test, agree with the owner on the seams to test: the
+public interfaces where behaviour is observed. Then work red → green, one slice at a time: one
+failing test, then only the code that makes it pass. Tests check behaviour through those public
+interfaces, never private functions, and their expected values come from an independent source,
+not from the code under test.
+
 Four levels at different cadences (details in Module 12):
 
 1. harness unit tests, no network, on every pull request;
