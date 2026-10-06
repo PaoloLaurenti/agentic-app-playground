@@ -113,6 +113,14 @@ Prompts do not live inline in the code. They live in Langfuse with versions and 
 a pull request diff and acts as a fallback when Langfuse is unreachable. The prompt's name and
 version are attached to every generation's attributes.
 
+### Knowledge lives in the repository
+
+Nothing may depend on an assistant's memory or on a past conversation: a new session must be able
+to resume from the repository alone. Decisions go in ADRs, measurements and open questions in the
+Work Log (`TUTORIAL.md`, Appendix E), and explanations of concepts in `TUTORIAL.md`. When a step
+relies on a concept the tutorial does not explain, add a 💡 **How … works** paragraph to the step
+where the concept is first used, and list it in §0.5.
+
 ### Decisions
 
 Every non-trivial decision becomes an ADR in `docs/adr/`, numbered sequentially, copied from
