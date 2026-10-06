@@ -134,10 +134,17 @@ failing test, then only the code that makes it pass. Tests check behaviour throu
 interfaces, never private functions, and their expected values come from an independent source,
 not from the code under test.
 
+**Mock only what you own.** A test may replace one of our own interfaces with a fake, such as
+`LlmClient`, never a third-party API or SDK: a fake of someone else's service only proves that
+the code agrees with our guess of how it behaves. The adapter that talks to such a service is
+covered by contract tests against the real one (level 3), and the code that uses the adapter is
+tested through our interface.
+
 Four levels at different cadences (details in Module 12):
 
 1. harness unit tests, no network, on every pull request;
-2. Bedrock adapter tests against simulated responses, no network, on every pull request;
+2. Bedrock adapter tests of the translation between neutral and SDK types, no network, on every
+   pull request;
 3. contract tests against the real services, `#[ignore]`, nightly;
 4. regression experiments over datasets with thresholds, nightly.
 
