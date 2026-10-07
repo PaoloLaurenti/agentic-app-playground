@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn with_tracing_every_call_is_a_call_model_span() {
-        let client = LlmClientBuilder::new(FakeClient { fail: false })
+        let client = LlmClientBuilder::new(FakeClient::default())
             .with_tracing()
             .build();
 
@@ -86,10 +86,102 @@ mod tests {
         assert_eq!(names, ["call-model"]);
     }
 
+    fn request_with_effort() -> LlmRequest {
+        LlmRequest {
+            extra: serde_json::json!({ "effort": "low", "thinking": "adaptive" }),
+            ..request()
+        }
+    }
+
+    fn model_parameters(span: &crate::test_support::ExportedSpan) -> serde_json::Value {
+        serde_json::from_str(&span.attributes["langfuse.observation.model.parameters"]).unwrap()
+    }
+
+    #[test]
+    fn with_tracing_the_generation_shows_the_parameters_the_provider_sends() {
+        let client = LlmClientBuilder::new(FakeClient {
+            drops: Some("effort"),
+            ..FakeClient::default()
+        })
+        .with_tracing()
+        .build();
+
+        let spans = exported_spans(|| {
+            block_on(client.complete(request_with_effort())).unwrap();
+        });
+
+        assert_eq!(
+            model_parameters(&spans[0]),
+            serde_json::json!({ "max_tokens": 50, "thinking": "adaptive" })
+        );
+    }
+
+    #[test]
+    fn with_tracing_a_streamed_generation_shows_the_parameters_the_provider_sends() {
+        let client = LlmClientBuilder::new(FakeClient {
+            drops: Some("effort"),
+            ..FakeClient::default()
+        })
+        .with_tracing()
+        .build();
+
+        let spans = exported_spans(|| {
+            block_on(async {
+                let events = client.stream(request_with_effort()).await.unwrap();
+                events.collect::<Vec<_>>().await;
+            });
+        });
+
+        assert_eq!(
+            model_parameters(&spans[0]),
+            serde_json::json!({ "max_tokens": 50, "thinking": "adaptive" })
+        );
+    }
+
+    #[test]
+    fn with_tracing_a_failed_generation_shows_the_parameters_the_provider_sends() {
+        let client = LlmClientBuilder::new(FakeClient {
+            fail: true,
+            drops: Some("effort"),
+        })
+        .with_tracing()
+        .build();
+
+        let spans = exported_spans(|| {
+            block_on(client.complete(request_with_effort())).unwrap_err();
+        });
+
+        assert_eq!(
+            model_parameters(&spans[0]),
+            serde_json::json!({ "max_tokens": 50, "thinking": "adaptive" })
+        );
+    }
+
+    #[test]
+    fn the_built_client_prepares_a_request_as_the_provider_would() {
+        let client = LlmClientBuilder::new(FakeClient {
+            drops: Some("effort"),
+            ..FakeClient::default()
+        })
+        .with_tracing()
+        .with_scoring(
+            Arc::new(RecordedScores::default()),
+            [always_ok as Evaluator],
+        )
+        .build();
+
+        let prepared = client.prepare(request_with_effort());
+
+        assert_eq!(
+            prepared.extra,
+            serde_json::json!({ "thinking": "adaptive" })
+        );
+    }
+
     #[test]
     fn with_scoring_every_verdict_is_sent_to_the_current_trace() {
         let scores = Arc::new(RecordedScores::default());
-        let client = LlmClientBuilder::new(FakeClient { fail: false })
+        let client = LlmClientBuilder::new(FakeClient::default())
             .with_scoring(scores.clone(), [always_ok as Evaluator])
             .build();
 
@@ -113,7 +205,7 @@ mod tests {
             ..RecordedScores::default()
         });
         // Asked in the other order on purpose: `build` decides the order.
-        let client = LlmClientBuilder::new(FakeClient { fail: false })
+        let client = LlmClientBuilder::new(FakeClient::default())
             .with_scoring(scores.clone(), [always_ok as Evaluator])
             .with_tracing()
             .build();
@@ -142,7 +234,7 @@ mod tests {
     #[test]
     fn a_stream_is_judged_on_the_whole_reply_once_it_ends() {
         let scores = Arc::new(RecordedScores::default());
-        let client = LlmClientBuilder::new(FakeClient { fail: false })
+        let client = LlmClientBuilder::new(FakeClient::default())
             .with_scoring(scores.clone(), [reply_is_ready as Evaluator])
             .build();
 
@@ -164,7 +256,7 @@ mod tests {
             fail: true,
             ..RecordedScores::default()
         });
-        let client = LlmClientBuilder::new(FakeClient { fail: false })
+        let client = LlmClientBuilder::new(FakeClient::default())
             .with_scoring(scores, [always_ok as Evaluator])
             .build();
 
@@ -179,9 +271,12 @@ mod tests {
     #[test]
     fn a_failed_call_is_not_judged() {
         let scores = Arc::new(RecordedScores::default());
-        let client = LlmClientBuilder::new(FakeClient { fail: true })
-            .with_scoring(scores.clone(), [always_ok as Evaluator])
-            .build();
+        let client = LlmClientBuilder::new(FakeClient {
+            fail: true,
+            ..FakeClient::default()
+        })
+        .with_scoring(scores.clone(), [always_ok as Evaluator])
+        .build();
 
         exported_spans(|| {
             let _root = tracing::info_span!("hello").entered();

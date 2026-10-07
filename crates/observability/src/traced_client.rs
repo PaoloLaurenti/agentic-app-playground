@@ -29,7 +29,13 @@ impl TracedClient {
 
 #[async_trait::async_trait]
 impl LlmClient for TracedClient {
+    fn prepare(&self, req: LlmRequest) -> LlmRequest {
+        self.inner.prepare(req)
+    }
+
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
+        // The generation shows what the provider sends, not what the caller asked for.
+        let req = self.inner.prepare(req);
         let span = call_span(&req, "complete");
         let result = self
             .inner
@@ -50,6 +56,7 @@ impl LlmClient for TracedClient {
         &self,
         req: LlmRequest,
     ) -> Result<BoxStream<'static, Result<LlmEvent, LlmError>>, LlmError> {
+        let req = self.inner.prepare(req);
         let span = call_span(&req, "stream");
         let events = match self
             .inner
@@ -166,7 +173,7 @@ mod tests {
 
     #[test]
     fn a_completed_call_is_one_generation_named_call_model() {
-        let client = TracedClient::new(FakeClient { fail: false });
+        let client = TracedClient::new(FakeClient::default());
 
         let spans = exported_spans(|| {
             block_on(client.complete(request())).unwrap();
@@ -187,7 +194,10 @@ mod tests {
 
     #[test]
     fn a_failed_call_is_still_returned_and_recorded_as_an_error() {
-        let client = TracedClient::new(FakeClient { fail: true });
+        let client = TracedClient::new(FakeClient {
+            fail: true,
+            ..FakeClient::default()
+        });
 
         let spans = exported_spans(|| {
             let result = block_on(client.complete(request()));
@@ -199,7 +209,7 @@ mod tests {
 
     #[test]
     fn a_stream_passes_every_event_through_and_records_the_whole_reply() {
-        let client = TracedClient::new(FakeClient { fail: false });
+        let client = TracedClient::new(FakeClient::default());
 
         let spans = exported_spans(|| {
             let events: Vec<_> =

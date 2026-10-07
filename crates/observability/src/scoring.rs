@@ -69,6 +69,10 @@ impl ScoringClient {
 
 #[async_trait::async_trait]
 impl LlmClient for ScoringClient {
+    fn prepare(&self, req: LlmRequest) -> LlmRequest {
+        self.inner.prepare(req)
+    }
+
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
         let response = self.inner.complete(req.clone()).await?;
         self.judge

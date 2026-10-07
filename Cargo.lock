@@ -1535,9 +1535,12 @@ dependencies = [
  "aws-config",
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
+ "dotenvy",
  "futures",
  "llm-core",
  "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
