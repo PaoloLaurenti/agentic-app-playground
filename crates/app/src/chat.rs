@@ -2,6 +2,7 @@
 //! one trace, and all the messages of a run share one session, so Langfuse shows the whole
 //! conversation in order.
 
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,7 +14,7 @@ use std::sync::Arc;
 use observability::Scores;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::{ModelRole, bedrock_target, pricing, system_prompt, text_of};
+use crate::{ModelRole, bedrock_target, output, pricing, system_prompt, text_of};
 
 #[derive(Args)]
 pub struct ChatArgs {
@@ -41,7 +42,9 @@ pub async fn chat(args: ChatArgs, scores: Option<Arc<dyn Scores>>) -> Result<()>
         .context("the clock is before 1970")?;
     let session_id = format!("chat-{}", started.as_millis());
     let price = pricing::price_of(&model);
-    println!("model: {model}\nsession: {session_id}\nuser: {}", args.user);
+    println!("model {model}\nsession {session_id} · user {}\n", args.user);
+    // A prompt only when a person is typing; piped messages need none.
+    let prompt = std::io::stdin().is_terminal();
 
     // The model remembers nothing between calls: every turn sends the whole conversation so far.
     let mut messages = Vec::new();
@@ -49,10 +52,20 @@ pub async fn chat(args: ChatArgs, scores: Option<Arc<dyn Scores>>) -> Result<()>
     // Read without blocking the runtime's thread while waiting for the next line.
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut turn_number = 0;
-    while let Some(line) = lines.next_line().await? {
+    loop {
+        if prompt {
+            print!("you › ");
+            std::io::stdout().flush()?;
+        }
+        let Some(line) = lines.next_line().await? else {
+            break;
+        };
         let text = line.trim();
         if text.is_empty() {
             continue;
+        }
+        if !prompt {
+            println!("you › {text}");
         }
         turn_number += 1;
         messages.push(Message {
@@ -68,28 +81,23 @@ pub async fn chat(args: ChatArgs, scores: Option<Arc<dyn Scores>>) -> Result<()>
         };
         let response = turn(client.as_ref(), request, text, &session_id, &args.user).await?;
 
-        let usage = &response.usage;
-        println!("\nturn {turn_number}");
-        println!("  you:    {text}");
-        println!("  reply:  {}", text_of(&response.message));
+        let cost = price.map(|price| pricing::cost(&response.usage, &price));
+        total_cost += cost.unwrap_or_default();
         println!(
-            "  tokens: {} input, {} output, {} cache read, {} cache write",
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.cache_read_tokens,
-            usage.cache_write_tokens
+            "{}",
+            output::labelled("bot › ", &text_of(&response.message))
         );
-        if let Some(price) = &price {
-            let cost = pricing::cost(usage, price);
-            total_cost += cost;
-            println!("  cost:   {cost:.6} USD");
-        }
+        let usage = output::usage_line(&response.usage, cost);
+        println!(
+            "      {}\n",
+            output::dimmed(&usage, output::color_enabled())
+        );
         messages.push(response.message);
     }
 
-    println!("\n{turn_number} turns");
-    if price.is_some() {
-        println!("total cost: {total_cost:.6} USD");
+    match price {
+        Some(_) => println!("{turn_number} turns · ${total_cost:.6}"),
+        None => println!("{turn_number} turns"),
     }
     Ok(())
 }
