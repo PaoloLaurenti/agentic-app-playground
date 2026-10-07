@@ -1,0 +1,11 @@
+[package]
+name = "prompts"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+llm-core = { version = "0.1.0", path = "../llm-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = "2.0.21"
+toml = "1.1.6"
