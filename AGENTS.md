@@ -59,7 +59,7 @@ Cargo.toml            the workspace: a virtual manifest whose members are crates
 crates/app            the CLI binary
 crates/llm-core       neutral types and the LlmClient trait, with no provider SDK
 crates/llm-bedrock    the Converse implementation of LlmClient
-crates/observability  tracing setup, OTLP export to Langfuse, the TracedClient decorator
+crates/observability  tracing and scores to Langfuse, the LlmClientBuilder and its decorators
 justfile              the check, test and run recipes
 .github/workflows/    CI: just check and just test on every pull request
 .env.example          the configuration variables, without values
