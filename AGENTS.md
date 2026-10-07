@@ -75,7 +75,7 @@ Where it is heading. Each piece is created by the module that first needs it, ne
 | a single crate at the root | the first binary, later moved to `crates/app` | Module 2 |
 | the workspace, `crates/llm-core`, `crates/llm-bedrock`, `crates/app` | neutral types and the `LlmClient` trait; its Converse implementation; the CLI | Module 4 |
 | `crates/observability` | tracing, OpenTelemetry, Langfuse client | Module 5 |
-| `crates/prompts`, `prompts/`, `datasets/` | prompts from Langfuse with cache and fallback; their snapshots; test cases in JSONL, synthetic only | Module 6 |
+| `crates/prompts`, `prompts/`, `datasets/` | prompts compiled into the binary; one file per prompt, pushed to Langfuse; test cases in JSONL, synthetic only | Module 6 |
 | `crates/harness` | agent loop, tool registry, context, pipeline steps | Module 7 |
 | `crates/router` | model registry, routing, fallback | Module 10 |
 | `crates/evals` | evaluation runner and dataset runs | Module 11 |
@@ -116,10 +116,11 @@ safety dataset, which stay in Italian because that is what the classifier must h
 
 ### Prompts
 
-Prompts do not live inline in the code. They live in Langfuse with versions and labels
-(`production`), and the downloaded snapshots live in `prompts/` so that every change shows up in
-a pull request diff and acts as a fallback when Langfuse is unreachable. The prompt's name and
-version are attached to every generation's attributes.
+Prompts do not live inline in the code. Each one is a file in `prompts/`, compiled into the
+binary: a commit fixes exactly which prompt runs, and changing it takes a pull request and a
+deploy (ADR 0009). `just prompts-push` copies new versions to Langfuse, which numbers them and
+links them to generations but never decides which one runs. The prompt's name and version are
+attached to every generation's attributes.
 
 ### Knowledge lives in the repository
 
@@ -163,5 +164,5 @@ above a threshold set above the noise.
 
 The project starts as a single crate in Module 2 and becomes a workspace in Module 4. `just`
 recipes are added by the module that needs them: `check` and `test` in Module 2, `run` in Module 4,
-`prompts-pull` in Module 6, `datasets-push` and `eval` in Module 11. The `justfile` shows what
+`prompts-push` in Module 6, `datasets-push` and `eval` in Module 11. The `justfile` shows what
 exists today; before Module 2 the only useful command is a toolchain check: `rustc --version`.
