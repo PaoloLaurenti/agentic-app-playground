@@ -2,9 +2,11 @@
 
 mod chat;
 mod pricing;
+mod smoke;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -15,7 +17,9 @@ use llm_core::{
     ContentBlock, LlmClient, LlmEvent, LlmRequest, Message, ModelId, Role, StopReason, SystemBlock,
     Usage,
 };
-use observability::{Config, LangfuseConfig, Telemetry, TracedClient};
+use observability::{
+    Config, Evaluator, LangfuseConfig, LlmClientBuilder, ScoreClient, Scores, Telemetry,
+};
 
 #[derive(Parser)]
 #[command(about = "The agentic app playground")]
@@ -86,10 +90,10 @@ struct Measure {
 #[tokio::main]
 async fn main() -> Result<()> {
     load_env_file()?;
-    let telemetry = init_telemetry()?;
+    let (telemetry, scores) = init_telemetry()?;
     let result = match Cli::parse().command {
-        Command::Hello(args) => hello(args).await,
-        Command::Chat(args) => chat::chat(args).await,
+        Command::Hello(args) => hello(args, scores).await,
+        Command::Chat(args) => chat::chat(args, scores).await,
     };
     // On failure too: the spans of a failed call are the ones worth reading.
     telemetry.shutdown()?;
@@ -110,8 +114,9 @@ fn load_env_file() -> Result<()> {
 const LANGFUSE_EU_HOST: &str = "https://cloud.langfuse.com";
 
 /// Spans are always printed, and exported to Langfuse only when its keys are set: without them,
-/// as in CI, the program runs the same.
-fn init_telemetry() -> Result<Telemetry> {
+/// as in CI, the program runs the same. The same keys reach the scores API, so there are scores
+/// only when there are traces to attach them to.
+fn init_telemetry() -> Result<(Telemetry, Option<Arc<dyn Scores>>)> {
     let langfuse = match (
         optional_env("LANGFUSE_PUBLIC_KEY"),
         optional_env("LANGFUSE_SECRET_KEY"),
@@ -136,6 +141,9 @@ fn init_telemetry() -> Result<Telemetry> {
         _ => bail!("set both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY, or neither"),
     };
     let exporting = langfuse.is_some();
+    let scores = langfuse
+        .as_ref()
+        .map(|config| Arc::new(ScoreClient::new(config)) as Arc<dyn Scores>);
     let telemetry = observability::init(Config {
         service_name: "app",
         exported_targets: &["app", "observability"],
@@ -144,7 +152,17 @@ fn init_telemetry() -> Result<Telemetry> {
     if !exporting {
         tracing::warn!("the Langfuse keys are not set: spans are not exported");
     }
-    Ok(telemetry)
+    Ok((telemetry, scores))
+}
+
+/// The client every command talks to: Bedrock, traced, and judged by the smoke check whenever
+/// there are traces to attach the verdict to.
+async fn llm_client(region: String, scores: Option<Arc<dyn Scores>>) -> Box<dyn LlmClient> {
+    let mut builder = LlmClientBuilder::new(BedrockClient::new(region).await).with_tracing();
+    if let Some(scores) = scores {
+        builder = builder.with_scoring(scores, [smoke::smoke_ok as Evaluator]);
+    }
+    builder.build()
 }
 
 /// A variable that may be missing; an empty value counts as missing.
@@ -196,7 +214,7 @@ fn text_of(message: &Message) -> String {
         .collect()
 }
 
-async fn hello(args: HelloArgs) -> Result<()> {
+async fn hello(args: HelloArgs, scores: Option<Arc<dyn Scores>>) -> Result<()> {
     let (region, model) = bedrock_target(args.model)?;
     ensure!(args.times > 0, "--times must be at least 1");
 
@@ -214,13 +232,14 @@ async fn hello(args: HelloArgs) -> Result<()> {
 
     // Built once and reused by every call: loading the configuration and the credentials is the
     // expensive part.
-    let client = TracedClient::new(BedrockClient::new(region).await);
+    let client = llm_client(region, scores).await;
     println!("model: {model}");
 
     let mut measures = Vec::new();
     for call in 1..=args.times {
         println!("\ncall {call}");
-        let measure = make_call(&client, request.clone(), &args.message, args.stream).await?;
+        let measure =
+            make_call(client.as_ref(), request.clone(), &args.message, args.stream).await?;
         print_measure(&model, &measure);
         measures.push(measure);
     }

@@ -7,9 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::Args;
-use llm_bedrock::BedrockClient;
 use llm_core::{ContentBlock, LlmClient, LlmRequest, LlmResponse, Message, ModelId, Role};
-use observability::TracedClient;
+use std::sync::Arc;
+
+use observability::Scores;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::{ModelRole, bedrock_target, pricing, system_prompt, text_of};
@@ -30,10 +31,10 @@ pub struct ChatArgs {
     user: String,
 }
 
-pub async fn chat(args: ChatArgs) -> Result<()> {
+pub async fn chat(args: ChatArgs, scores: Option<Arc<dyn Scores>>) -> Result<()> {
     let (region, model) = bedrock_target(args.model)?;
     let system = system_prompt(args.system.as_deref())?;
-    let client = TracedClient::new(BedrockClient::new(region).await);
+    let client = crate::llm_client(region, scores).await;
     // One run of the command is one session.
     let started = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -65,7 +66,7 @@ pub async fn chat(args: ChatArgs) -> Result<()> {
             max_tokens: args.max_tokens,
             extra: serde_json::Value::Null,
         };
-        let response = turn(&client, request, text, &session_id, &args.user).await?;
+        let response = turn(client.as_ref(), request, text, &session_id, &args.user).await?;
 
         let usage = &response.usage;
         println!("\nturn {turn_number}");
