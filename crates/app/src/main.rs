@@ -1,6 +1,7 @@
 //! The command-line entry point of the playground.
 
 mod chat;
+mod output;
 mod pricing;
 mod smoke;
 
@@ -87,8 +88,21 @@ struct Measure {
     end_to_end: Duration,
 }
 
+/// Errors are printed in one line, with what to do about them when that is known; the full
+/// chain stays in the trace and in the logs.
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            let profile = optional_env("AWS_PROFILE").unwrap_or_else(|| "default".to_owned());
+            eprintln!("error: {}", output::error_message(&err, &profile));
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<()> {
     load_env_file()?;
     let (telemetry, scores) = init_telemetry()?;
     let result = match Cli::parse().command {
@@ -233,13 +247,20 @@ async fn hello(args: HelloArgs, scores: Option<Arc<dyn Scores>>) -> Result<()> {
     // Built once and reused by every call: loading the configuration and the credentials is the
     // expensive part.
     let client = llm_client(region, scores).await;
-    println!("model: {model}");
+    println!("model {model}");
 
     let mut measures = Vec::new();
     for call in 1..=args.times {
-        println!("\ncall {call}");
-        let measure =
-            make_call(client.as_ref(), request.clone(), &args.message, args.stream).await?;
+        println!();
+        let label = format!("[{call}] ");
+        let measure = make_call(
+            client.as_ref(),
+            request.clone(),
+            &args.message,
+            args.stream,
+            &label,
+        )
+        .await?;
         print_measure(&model, &measure);
         measures.push(measure);
     }
@@ -262,23 +283,28 @@ async fn make_call(
     request: LlmRequest,
     message: &str,
     stream: bool,
+    label: &str,
 ) -> Result<Measure> {
     let measure = if stream {
-        call_streaming(client, request).await?
+        call_streaming(client, request, label).await?
     } else {
-        call_complete(client, request).await?
+        call_complete(client, request, label).await?
     };
     tracing::Span::current().record("output.value", measure.reply.as_str());
     Ok(measure)
 }
 
-async fn call_complete(client: &dyn LlmClient, request: LlmRequest) -> Result<Measure> {
+async fn call_complete(
+    client: &dyn LlmClient,
+    request: LlmRequest,
+    label: &str,
+) -> Result<Measure> {
     let started = Instant::now();
     let response = client.complete(request).await?;
     let end_to_end = started.elapsed();
 
     let reply = text_of(&response.message);
-    println!("  reply:       {reply}");
+    println!("{}", output::labelled(label, &reply));
 
     Ok(Measure {
         reply,
@@ -292,7 +318,13 @@ async fn call_complete(client: &dyn LlmClient, request: LlmRequest) -> Result<Me
 
 /// Prints the reply while it arrives. The stop reason comes before the token counts, so the
 /// stream is read to its end.
-async fn call_streaming(client: &dyn LlmClient, request: LlmRequest) -> Result<Measure> {
+async fn call_streaming(
+    client: &dyn LlmClient,
+    request: LlmRequest,
+    label: &str,
+) -> Result<Measure> {
+    // The label is printed with the first piece of text, so that an error does not leave it alone.
+    let indent = format!("\n{}", " ".repeat(label.chars().count()));
     let started = Instant::now();
     let mut events = client.stream(request).await?;
 
@@ -300,12 +332,14 @@ async fn call_streaming(client: &dyn LlmClient, request: LlmRequest) -> Result<M
     let mut first_token = None;
     let mut stop_reason = None;
     let mut metadata = None;
-    print!("  reply:       ");
     while let Some(event) = events.next().await {
         match event? {
             LlmEvent::TextDelta(text) => {
+                if first_token.is_none() {
+                    print!("{label}");
+                }
                 first_token.get_or_insert_with(|| started.elapsed());
-                print!("{text}");
+                print!("{}", text.replace('\n', &indent));
                 // Without a flush the terminal would show the text only at the end of the line.
                 std::io::stdout().flush()?;
                 reply.push_str(&text);
@@ -330,27 +364,9 @@ async fn call_streaming(client: &dyn LlmClient, request: LlmRequest) -> Result<M
 }
 
 fn print_measure(model: &str, measure: &Measure) {
-    let usage = &measure.usage;
-    let cost = match pricing::price_of(model) {
-        Some(price) => format!("{:.6} USD", pricing::cost(usage, &price)),
-        None => "unknown, no price for this model".to_owned(),
-    };
-    let first_token = match measure.first_token {
-        Some(first_token) => format!(", first token after {} ms", first_token.as_millis()),
-        None => String::new(),
-    };
-
-    println!("  stop reason: {:?}", measure.stop_reason);
-    println!(
-        "  tokens:      {} input, {} output, {} cache read, {} cache write",
-        usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_write_tokens
-    );
-    println!(
-        "  latency:     {} ms on Bedrock, {} ms end to end{first_token}",
-        measure.bedrock_latency.as_millis(),
-        measure.end_to_end.as_millis(),
-    );
-    println!("  cost:        {cost}");
+    let cost = pricing::price_of(model).map(|price| pricing::cost(&measure.usage, &price));
+    let line = output::measure_line(measure, cost);
+    println!("    {}", output::dimmed(&line, output::color_enabled()));
 }
 
 fn print_summary(measures: &[Measure]) -> Result<()> {

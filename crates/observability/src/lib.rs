@@ -31,9 +31,9 @@ pub use builder::LlmClientBuilder;
 pub use scores::{ScoreClient, Scores, current_trace_id};
 pub use scoring::{Evaluator, Verdict};
 
-/// What the logs show when `RUST_LOG` is not set: `aws_config` at `info` prints the whole
-/// credential chain on every run.
-const DEFAULT_LOG_FILTER: &str = "info,aws_config=warn";
+/// What the logs show when `RUST_LOG` is not set: only warnings and errors, so that the commands'
+/// own output stays readable. `RUST_LOG=info` adds one line per closed span.
+const DEFAULT_LOG_FILTER: &str = "warn";
 
 /// A Langfuse project, reached through its OpenTelemetry endpoint.
 pub struct LangfuseConfig {
