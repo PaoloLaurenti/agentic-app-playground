@@ -22,7 +22,7 @@
 - [X] Module 2 · Environment and Rust repository setup
 - [X] Module 3 · Enabling Amazon Bedrock
 - [X] Module 4 · First Bedrock call from Rust
-- [ ] Module 5 · Enabling Langfuse and seeing the calls
+- [X] Module 5 · Enabling Langfuse and seeing the calls
 - [ ] Module 6 · Systematic prompt engineering with Langfuse Prompt Management
 - [ ] Module 7 · Tool calling and the first agent loop
 - [ ] Module 8 · Context engineering
