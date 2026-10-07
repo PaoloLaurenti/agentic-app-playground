@@ -1,31 +1,34 @@
 //! A decorator that observes any [`LlmClient`]: one span per call, which Langfuse shows as a
 //! generation. The client inside only calls its provider and knows nothing about tracing.
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use llm_core::{
-    ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, Role,
-    StopReason, Usage,
-};
+use llm_core::{LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse};
 use tracing::{Instrument, Span, field};
 
 use crate::generation::{record_completion_start, record_generation, record_generation_error};
+use crate::reply_so_far::ReplySoFar;
 
 /// Wraps a client and behaves exactly like it, recording every call on the way.
-pub struct TracedClient<C> {
-    inner: C,
+pub(crate) struct TracedClient {
+    inner: Box<dyn LlmClient>,
 }
 
-impl<C> TracedClient<C> {
-    pub fn new(inner: C) -> Self {
+impl TracedClient {
+    #[cfg(test)]
+    pub(crate) fn new(inner: impl LlmClient + 'static) -> Self {
+        Self::around(Box::new(inner))
+    }
+
+    pub(crate) fn around(inner: Box<dyn LlmClient>) -> Self {
         Self { inner }
     }
 }
 
 #[async_trait::async_trait]
-impl<C: LlmClient> LlmClient for TracedClient<C> {
+impl LlmClient for TracedClient {
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
         let span = call_span(&req, "complete");
         let result = self
@@ -68,14 +71,16 @@ impl<C: LlmClient> LlmClient for TracedClient<C> {
             events,
             span,
             req,
-            so_far: StreamSoFar::default(),
+            so_far: ReplySoFar::default(),
         };
         let events = futures::stream::unfold(Some(state), |state| async move {
             let mut state = state?;
             let next = state.events.next().instrument(state.span.clone()).await;
             match next {
                 Some(Ok(event)) => {
-                    state.so_far.add(&state.span, &event);
+                    if state.so_far.add(&event) {
+                        record_completion_start(&state.span, SystemTime::now());
+                    }
                     Some((Ok(event), Some(state)))
                 }
                 Some(Err(err)) => {
@@ -134,7 +139,7 @@ struct TracedStream {
     events: BoxStream<'static, Result<LlmEvent, LlmError>>,
     span: Span,
     req: LlmRequest,
-    so_far: StreamSoFar,
+    so_far: ReplySoFar,
 }
 
 impl TracedStream {
@@ -154,121 +159,10 @@ impl TracedStream {
     }
 }
 
-/// What a stream has said so far.
-#[derive(Default)]
-struct StreamSoFar {
-    text: String,
-    first_token: bool,
-    stop_reason: Option<StopReason>,
-    metadata: Option<(Usage, Duration)>,
-}
-
-impl StreamSoFar {
-    fn add(&mut self, span: &Span, event: &LlmEvent) {
-        match event {
-            LlmEvent::TextDelta(text) => {
-                if !self.first_token {
-                    self.first_token = true;
-                    record_completion_start(span, SystemTime::now());
-                }
-                self.text.push_str(text);
-            }
-            LlmEvent::Stop(reason) => self.stop_reason = Some(reason.clone()),
-            LlmEvent::Metadata { usage, latency } => self.metadata = Some((*usage, *latency)),
-        }
-    }
-
-    /// The whole response, once the stop reason and the token counts have both arrived.
-    fn into_response(self) -> Option<LlmResponse> {
-        let (usage, latency) = self.metadata?;
-        Some(LlmResponse {
-            message: Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text(self.text)],
-            },
-            stop_reason: self.stop_reason?,
-            usage,
-            latency,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use llm_core::ModelId;
-
     use super::*;
-    use crate::test_support::exported_spans;
-
-    /// Runs a future to completion. Not with `futures::executor::block_on`: the in-memory
-    /// exporter uses that one itself when a span closes, and the two cannot be nested.
-    fn block_on<F: std::future::Future>(future: F) -> F::Output {
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap()
-            .block_on(future)
-    }
-
-    /// Answers with a fixed reply, or fails, without any provider behind it.
-    struct FakeClient {
-        fail: bool,
-    }
-
-    fn reply() -> LlmResponse {
-        LlmResponse {
-            message: Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text("Ready.".into())],
-            },
-            stop_reason: StopReason::EndTurn,
-            usage: Usage {
-                input_tokens: 15,
-                output_tokens: 5,
-                ..Usage::default()
-            },
-            latency: Duration::from_millis(700),
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl LlmClient for FakeClient {
-        async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
-            if self.fail {
-                return Err(LlmError::Throttled("slow down".into()));
-            }
-            Ok(reply())
-        }
-
-        async fn stream(
-            &self,
-            _req: LlmRequest,
-        ) -> Result<BoxStream<'static, Result<LlmEvent, LlmError>>, LlmError> {
-            let reply = reply();
-            let events = vec![
-                Ok(LlmEvent::TextDelta("Rea".into())),
-                Ok(LlmEvent::TextDelta("dy.".into())),
-                Ok(LlmEvent::Stop(reply.stop_reason)),
-                Ok(LlmEvent::Metadata {
-                    usage: reply.usage,
-                    latency: reply.latency,
-                }),
-            ];
-            Ok(futures::stream::iter(events).boxed())
-        }
-    }
-
-    fn request() -> LlmRequest {
-        LlmRequest {
-            model: ModelId::new("test-model"),
-            system: vec![],
-            messages: vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("Ready?".into())],
-            }],
-            max_tokens: 50,
-            extra: serde_json::Value::Null,
-        }
-    }
+    use crate::test_support::{FakeClient, block_on, exported_spans, request};
 
     #[test]
     fn a_completed_call_is_one_generation_named_call_model() {

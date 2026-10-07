@@ -3,7 +3,11 @@
 //!
 //! The rest of the code only uses `tracing`: which backend receives the spans is decided here.
 
+mod builder;
 mod generation;
+mod reply_so_far;
+mod scores;
+mod scoring;
 mod trace_context;
 mod traced_client;
 
@@ -23,7 +27,9 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
-pub use traced_client::TracedClient;
+pub use builder::LlmClientBuilder;
+pub use scores::{ScoreClient, Scores, current_trace_id};
+pub use scoring::{Evaluator, Verdict};
 
 /// What the logs show when `RUST_LOG` is not set: `aws_config` at `info` prints the whole
 /// credential chain on every run.
@@ -63,6 +69,13 @@ pub enum Error {
     Subscriber(#[from] tracing_subscriber::util::TryInitError),
     #[error("cannot send the last spans to Langfuse: {0}")]
     Flush(#[from] opentelemetry_sdk::error::OTelSdkError),
+    #[error("cannot reach the Langfuse API: {0}")]
+    Api(#[from] reqwest::Error),
+    #[error("Langfuse rejected the score with status {status}: {reason}")]
+    ScoreRejected {
+        status: reqwest::StatusCode,
+        reason: String,
+    },
 }
 
 /// Holds the exporter. Spans leave in batches from a background thread, so a short-lived
@@ -123,6 +136,13 @@ pub fn init(config: Config) -> Result<Telemetry, Error> {
     Ok(Telemetry { provider })
 }
 
+/// The `Authorization` header for a Langfuse project: Basic authentication with the public key as
+/// the user and the secret key as the password. The OTLP endpoint and the public API share it.
+fn basic_authorization(langfuse: &LangfuseConfig) -> String {
+    let credentials = BASE64.encode(format!("{}:{}", langfuse.public_key, langfuse.secret_key));
+    format!("Basic {credentials}")
+}
+
 fn tracer_provider(
     service_name: &'static str,
     langfuse: &LangfuseConfig,
@@ -130,9 +150,8 @@ fn tracer_provider(
     if !is_valid_environment(&langfuse.environment) {
         return Err(Error::InvalidEnvironment(langfuse.environment.clone()));
     }
-    let credentials = BASE64.encode(format!("{}:{}", langfuse.public_key, langfuse.secret_key));
     let headers = HashMap::from([
-        ("Authorization".to_owned(), format!("Basic {credentials}")),
+        ("Authorization".to_owned(), basic_authorization(langfuse)),
         // Without it, spans sent straight over OTLP can take up to ten minutes to show up.
         ("x-langfuse-ingestion-version".to_owned(), "4".to_owned()),
     ]);
@@ -159,6 +178,14 @@ fn tracer_provider(
 #[cfg(test)]
 mod test_support {
     use std::collections::HashMap;
+    use std::time::Duration;
+
+    use futures::StreamExt;
+    use futures::stream::BoxStream;
+    use llm_core::{
+        ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId,
+        Role, StopReason, Usage,
+    };
 
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_sdk::trace::{
@@ -169,7 +196,11 @@ mod test_support {
     /// A span as it would have left for Langfuse.
     pub struct ExportedSpan {
         pub name: String,
+        pub trace_id: String,
+        pub duration: Duration,
         pub attributes: HashMap<String, String>,
+        /// The names of the events logged inside the span, such as warnings.
+        pub events: Vec<String>,
     }
 
     /// Runs `f` with an OpenTelemetry layer that exports to memory instead of the network, and
@@ -194,6 +225,13 @@ mod test_support {
             .into_iter()
             .map(|span| ExportedSpan {
                 name: span.name.to_string(),
+                trace_id: span.span_context.trace_id().to_string(),
+                duration: span.end_time.duration_since(span.start_time).unwrap(),
+                events: span
+                    .events
+                    .iter()
+                    .map(|event| event.name.to_string())
+                    .collect(),
                 attributes: span
                     .attributes
                     .iter()
@@ -201,5 +239,104 @@ mod test_support {
                     .collect(),
             })
             .collect()
+    }
+
+    /// Runs a future to completion. Not with `futures::executor::block_on`: the in-memory
+    /// exporter uses that one itself when a span closes, and the two cannot be nested.
+    pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    pub fn request() -> LlmRequest {
+        LlmRequest {
+            model: ModelId::new("test-model"),
+            system: vec![],
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text("Ready?".into())],
+            }],
+            max_tokens: 50,
+            extra: serde_json::Value::Null,
+        }
+    }
+
+    pub fn reply() -> LlmResponse {
+        LlmResponse {
+            message: Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::Text("Ready.".into())],
+            },
+            stop_reason: StopReason::EndTurn,
+            usage: Usage {
+                input_tokens: 15,
+                output_tokens: 5,
+                ..Usage::default()
+            },
+            latency: Duration::from_millis(700),
+        }
+    }
+
+    /// Answers with a fixed reply, or fails, without any provider behind it.
+    pub struct FakeClient {
+        pub fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmClient for FakeClient {
+        async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
+            if self.fail {
+                return Err(LlmError::Throttled("slow down".into()));
+            }
+            Ok(reply())
+        }
+
+        async fn stream(
+            &self,
+            _req: LlmRequest,
+        ) -> Result<BoxStream<'static, Result<LlmEvent, LlmError>>, LlmError> {
+            let reply = reply();
+            let events = vec![
+                Ok(LlmEvent::TextDelta("Rea".into())),
+                Ok(LlmEvent::TextDelta("dy.".into())),
+                Ok(LlmEvent::Stop(reply.stop_reason)),
+                Ok(LlmEvent::Metadata {
+                    usage: reply.usage,
+                    latency: reply.latency,
+                }),
+            ];
+            Ok(futures::stream::iter(events).boxed())
+        }
+    }
+
+    /// Keeps the scores it is asked to send instead of sending them; can also fail or be slow.
+    #[derive(Default)]
+    pub struct RecordedScores {
+        pub sent: std::sync::Mutex<Vec<(String, String, bool)>>,
+        pub fail: bool,
+        pub delay: Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::Scores for RecordedScores {
+        async fn boolean(
+            &self,
+            trace_id: &str,
+            name: &str,
+            value: bool,
+        ) -> Result<String, crate::Error> {
+            tokio::time::sleep(self.delay).await;
+            if self.fail {
+                return Err(crate::Error::InvalidEnvironment("a fake failure".into()));
+            }
+            self.sent
+                .lock()
+                .unwrap()
+                .push((trace_id.to_owned(), name.to_owned(), value));
+            Ok("score-1".to_owned())
+        }
     }
 }
