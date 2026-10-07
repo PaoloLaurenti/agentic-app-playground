@@ -281,12 +281,23 @@ mod test_support {
     }
 
     /// Answers with a fixed reply, or fails, without any provider behind it.
+    #[derive(Default)]
     pub struct FakeClient {
         pub fail: bool,
+        /// A top-level field of `extra` that this client would not send, as a provider drops a
+        /// parameter its model rejects.
+        pub drops: Option<&'static str>,
     }
 
     #[async_trait::async_trait]
     impl LlmClient for FakeClient {
+        fn prepare(&self, mut req: LlmRequest) -> LlmRequest {
+            if let (Some(field), Some(extra)) = (self.drops, req.extra.as_object_mut()) {
+                extra.remove(field);
+            }
+            req
+        }
+
         async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
             if self.fail {
                 return Err(LlmError::Throttled("slow down".into()));

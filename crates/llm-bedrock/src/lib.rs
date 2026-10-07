@@ -17,7 +17,7 @@ use aws_smithy_types::{Document, Number};
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use llm_core::{
-    ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, Role,
+    ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId, Role,
     StopReason, SystemBlock, Usage,
 };
 
@@ -58,15 +58,29 @@ impl BedrockClient {
 
 #[async_trait::async_trait]
 impl LlmClient for BedrockClient {
+    fn prepare(&self, mut req: LlmRequest) -> LlmRequest {
+        for path in rejected_params(&req.model) {
+            if remove_path(&mut req.extra, path) {
+                tracing::warn!(
+                    model = req.model.as_str(),
+                    parameter = path.join("."),
+                    "the model does not accept this parameter, so it was not sent"
+                );
+            }
+        }
+        req
+    }
+
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
-        self.converse(&req).await
+        // Prepared here too, so that the client is safe without any decorator around it.
+        self.converse(&self.prepare(req)).await
     }
 
     async fn stream(
         &self,
         req: LlmRequest,
     ) -> Result<BoxStream<'static, Result<LlmEvent, LlmError>>, LlmError> {
-        let receiver = self.start_stream(&req).await?;
+        let receiver = self.start_stream(&self.prepare(req)).await?;
 
         // The SDK hands out a receiver to pull events from, not a `Stream`: `unfold` turns one
         // into the other. The state becomes `None` after an error, which ends the stream.
@@ -78,6 +92,43 @@ impl LlmClient for BedrockClient {
             }
         });
         Ok(events.boxed())
+    }
+}
+
+/// What a model family rejects, as paths into `LlmRequest.extra`, matched on a part of the model
+/// id. A model missing from the table gets every parameter as it is. In Module 10 this table
+/// moves into the `ModelRegistry`.
+const REJECTED_PARAMS: &[(&str, &[&[&str]])] = &[
+    // Bedrock answers "This model does not support the effort parameter".
+    ("claude-haiku-4-5", &[&["output_config", "effort"]]),
+];
+
+fn rejected_params(model: &ModelId) -> impl Iterator<Item = &'static [&'static str]> {
+    REJECTED_PARAMS
+        .iter()
+        .filter(|(family, _)| model.as_str().contains(family))
+        .flat_map(|(_, paths)| paths.iter().copied())
+}
+
+/// Removes the field at `path`, and every object that removing it leaves empty, so that no empty
+/// object reaches the model. Says whether the field was there.
+fn remove_path(value: &mut serde_json::Value, path: &[&str]) -> bool {
+    let Some(fields) = value.as_object_mut() else {
+        return false;
+    };
+    match path {
+        [] => false,
+        [last] => fields.remove(*last).is_some(),
+        [first, rest @ ..] => {
+            let Some(child) = fields.get_mut(*first) else {
+                return false;
+            };
+            let removed = remove_path(child, rest);
+            if removed && child.as_object().is_some_and(|child| child.is_empty()) {
+                fields.remove(*first);
+            }
+            removed
+        }
     }
 }
 
@@ -768,6 +819,71 @@ mod tests {
         let result = SdkRequest::try_from(&request_with_extra(serde_json::json!("low")));
 
         assert!(matches!(result, Err(LlmError::ValidationError(_))));
+    }
+
+    /// A client that is never sent anything: building it reads no AWS configuration.
+    fn offline_client() -> BedrockClient {
+        let config = aws_sdk_bedrockruntime::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("eu-west-1"))
+            .build();
+        BedrockClient {
+            client: aws_sdk_bedrockruntime::Client::from_conf(config),
+        }
+    }
+
+    fn request_for(model: &str, extra: serde_json::Value) -> LlmRequest {
+        LlmRequest {
+            model: ModelId::new(model),
+            ..request_with_extra(extra)
+        }
+    }
+
+    const HAIKU_4_5: &str = "eu.anthropic.claude-haiku-4-5-20251001-v1:0";
+
+    #[test]
+    fn effort_is_dropped_for_a_model_that_rejects_it() {
+        let request = request_for(
+            HAIKU_4_5,
+            serde_json::json!({
+                "output_config": { "effort": "low", "format": "json" },
+                "thinking": { "type": "enabled", "budget_tokens": 1024 },
+            }),
+        );
+
+        let prepared = offline_client().prepare(request);
+
+        assert_eq!(
+            prepared.extra,
+            serde_json::json!({
+                "output_config": { "format": "json" },
+                "thinking": { "type": "enabled", "budget_tokens": 1024 },
+            })
+        );
+    }
+
+    #[test]
+    fn an_object_left_empty_by_a_dropped_parameter_is_not_sent() {
+        let request = request_for(
+            HAIKU_4_5,
+            serde_json::json!({ "output_config": { "effort": "low" } }),
+        );
+
+        let prepared = offline_client().prepare(request);
+
+        assert_eq!(prepared.extra, serde_json::json!({}));
+    }
+
+    #[test]
+    fn a_model_that_accepts_effort_gets_the_request_unchanged() {
+        let request = request_for(
+            "eu.anthropic.claude-sonnet-4-6",
+            serde_json::json!({ "output_config": { "effort": "low" } }),
+        );
+
+        let prepared = offline_client().prepare(request.clone());
+
+        assert_eq!(prepared, request);
     }
 
     #[test]

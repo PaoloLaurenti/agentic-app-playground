@@ -121,6 +121,11 @@ pub enum LlmError {
 /// A client for an LLM provider. The harness only ever talks to this trait, never to an SDK.
 #[async_trait::async_trait]
 pub trait LlmClient: Send + Sync {
+    /// The request as this client will actually send it: a provider drops what the target model
+    /// does not accept, and a decorator returns what the client inside it would send. There is no
+    /// default, so that every new client has to decide.
+    fn prepare(&self, req: LlmRequest) -> LlmRequest;
+
     async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError>;
 
     async fn stream(
@@ -143,6 +148,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmClient for FixedReplyClient {
+        fn prepare(&self, req: LlmRequest) -> LlmRequest {
+            req
+        }
+
         async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
             Ok(LlmResponse {
                 message: Message {
