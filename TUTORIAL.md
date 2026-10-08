@@ -376,8 +376,22 @@ Every entry points to the step whose paragraph explains it. The foundations are 
 - [ ] 6.10 🧪 **Lab: the `SAFETY` prompt in Italian.** Build `datasets/safety/v1.jsonl` with **30–50 synthetic messages** labelled by hand (`SAFE`, `PSYCH_CRISIS`, `MEDICAL_EMERGENCY`), including the ambiguous cases typical of Italian ("non ce la faccio più", "sono stanca di tutto", "mi scoppia la testa"). Measure accuracy, false negatives (the worst case here), latency and cost on `BEDROCK_MODEL_FAST`. For now the runner is a simple script; in Module 11 it becomes a Langfuse experiment.
 
   💡 **How to read a classifier's results.** Accuracy, the share of correct answers, hides what matters when classes are unbalanced: if 90% of a dataset is `SAFE`, a classifier that always answers `SAFE` scores 90% and misses every crisis. Look instead at the *confusion matrix*, a table of expected label against predicted label, and at two numbers for each risk class.
-  - **Recall** is the share of real crises the classifier catches. Its complement is the *false negative* rate, the risk that went unseen: the worst error in this domain.
-  - **Precision** is the share of alarms that were real. Its complement, the *false positives*, costs an unnecessary escalation.
+  The two numbers look at two different groups of messages, which only partly overlap. The **real crises** are decided by whoever writes the dataset: they are the truth. The **alarms** are decided by the classifier: the messages it labels as a crisis. Say that 6 of 40 messages are real crises and the classifier raises 10 alarms, 4 of them on real crises:
+
+  ```text
+   real crises (6)                    alarms (10)
+  ┌────────────────────┬───────────────┬────────────────────┐
+  │  2 crises MISSED   │ 4 crises      │  6 FALSE alarms    │
+  │  (real, but no     │ CAUGHT        │  (an alarm, but    │
+  │  alarm)            │ (real and     │  not a crisis)     │
+  │                    │ flagged)      │                    │
+  └────────────────────┴───────────────┴────────────────────┘
+  ```
+
+  - **Recall** looks from the side of the truth: of the real crises, how many did the classifier catch? Here 4/6 = 67%. What it lacks to reach 100% are the *false negatives*, the crises missed: the worst error in this domain.
+  - **Precision** looks from the side of the classifier: of its alarms, how many were real crises? Here 4/10 = 40%. What it lacks to reach 100% are the *false positives*, each costing an unnecessary escalation.
+
+  Each number sees an error the other cannot: the missed crises lie outside the alarms, so precision never counts them, and the false alarms lie outside the real crises, so recall never counts them. Two extreme classifiers on the same 40 messages show why you need both. An *alarmist* one that flags every message has a perfect recall (6/6) and a precision of 15% (6/40). A *timid* one that flags only the most obvious case has a perfect precision (1/1) and a recall of 17% (1/6). In the confusion matrix, recall is read along a row (one expected label) and precision down a column (one predicted label).
 
   The two trade against each other, and for `SAFETY` you accept lower precision to keep recall high. Numbers from a small dataset are also noisy: over n cases, a rate near 50% is only known to within about ±1/√n at 95% confidence (±18 points with 30 cases, ±10 with 100), a little less near 0% or 100%. A difference between two prompts smaller than that is not evidence of anything. Module 11 turns this into proper confidence intervals (11.9).
 - [ ] 6.11 🧪 🔭 Iterate **in Langfuse**: v2 with examples, v3 with more explicit rules about context, v4 with a different `effort` in the `config` if the fast model supports it, otherwise a different `temperature`. One variable at a time. Use the Langfuse **Playground** to try a variant on three or four cases quickly before running the whole dataset (connect the playground to Bedrock under *LLM connections* if it is available for your model; otherwise run it from your own runner). Record every run with the card in Appendix D. Move the `production` label only onto the winning version.
