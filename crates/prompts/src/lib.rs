@@ -2,7 +2,7 @@
 //! a commit fixes exactly which prompt runs, and nothing at runtime can change it.
 
 use llm_core::{ContentBlock, Message, Role, SystemBlock};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// A chat prompt as its file describes it, before its variables are filled in.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -16,14 +16,14 @@ pub struct Prompt {
     pub messages: Vec<PromptMessage>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PromptMessage {
     pub role: PromptRole,
     /// The template, with variables written as `{{name}}`.
     pub content: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PromptRole {
     System,

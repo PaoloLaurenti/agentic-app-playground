@@ -3,6 +3,7 @@
 mod chat;
 mod output;
 mod pricing;
+mod prompts_push;
 mod smoke;
 
 use std::io::Write;
@@ -35,6 +36,8 @@ enum Command {
     Hello(HelloArgs),
     /// Hold a conversation read from standard input, one message per line.
     Chat(chat::ChatArgs),
+    /// Copy to Langfuse every prompt file whose text is not yet the version it names.
+    PromptsPush,
 }
 
 #[derive(Args)]
@@ -108,6 +111,7 @@ async fn run() -> Result<()> {
     let result = match Cli::parse().command {
         Command::Hello(args) => hello(args, scores).await,
         Command::Chat(args) => chat::chat(args, scores).await,
+        Command::PromptsPush => prompts_push::push_all(langfuse_config()?).await,
     };
     // On failure too: the spans of a failed call are the ones worth reading.
     telemetry.shutdown()?;
@@ -127,17 +131,15 @@ fn load_env_file() -> Result<()> {
 /// The EU region of Langfuse Cloud, the only one AGENTS.md allows.
 const LANGFUSE_EU_HOST: &str = "https://cloud.langfuse.com";
 
-/// Spans are always printed, and exported to Langfuse only when its keys are set: without them,
-/// as in CI, the program runs the same. The same keys reach the scores API, so there are scores
-/// only when there are traces to attach them to.
-fn init_telemetry() -> Result<(Telemetry, Option<Arc<dyn Scores>>)> {
-    let langfuse = match (
+/// The Langfuse project in the environment, or `None` when its keys are not set.
+fn langfuse_config() -> Result<Option<LangfuseConfig>> {
+    let config = match (
         optional_env("LANGFUSE_PUBLIC_KEY"),
         optional_env("LANGFUSE_SECRET_KEY"),
     ) {
         (Some(public_key), Some(secret_key)) => {
             let host = required_env("LANGFUSE_HOST")?;
-            // The EU-only rule again, for the traces this time.
+            // The EU-only rule again, for traces, scores and prompts this time.
             ensure!(
                 host.trim_end_matches('/') == LANGFUSE_EU_HOST,
                 "LANGFUSE_HOST {host} is not the EU region {LANGFUSE_EU_HOST}"
@@ -154,6 +156,14 @@ fn init_telemetry() -> Result<(Telemetry, Option<Arc<dyn Scores>>)> {
         // One key without the other is a configuration mistake, not a choice to stop exporting.
         _ => bail!("set both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY, or neither"),
     };
+    Ok(config)
+}
+
+/// Spans are always printed, and exported to Langfuse only when its keys are set: without them,
+/// as in CI, the program runs the same. The same keys reach the scores API, so there are scores
+/// only when there are traces to attach them to.
+fn init_telemetry() -> Result<(Telemetry, Option<Arc<dyn Scores>>)> {
+    let langfuse = langfuse_config()?;
     let exporting = langfuse.is_some();
     let scores = langfuse
         .as_ref()

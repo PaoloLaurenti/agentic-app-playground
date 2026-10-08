@@ -14,6 +14,7 @@ opentelemetry = "0.33.0"
 # processor's own thread, and rustls gives it HTTPS.
 opentelemetry-otlp = { version = "0.33.0", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client", "reqwest-rustls"] }
 opentelemetry_sdk = "0.33.0"
+prompts = { version = "0.1.0", path = "../prompts" }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
 serde_json = { workspace = true }
 thiserror = "2.0.21"

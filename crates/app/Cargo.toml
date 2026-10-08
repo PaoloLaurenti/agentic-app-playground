@@ -11,6 +11,11 @@ futures = { workspace = true }
 llm-bedrock = { version = "0.1.0", path = "../llm-bedrock" }
 llm-core = { version = "0.1.0", path = "../llm-core" }
 observability = { version = "0.1.0", path = "../observability" }
+prompts = { version = "0.1.0", path = "../prompts" }
 serde_json = { workspace = true }
 tokio = { version = "1.53.1", features = ["io-std", "io-util", "macros", "rt-multi-thread"] }
+toml_edit = "0.25.16"
 tracing = "0.1.44"
+
+[dev-dependencies]
+async-trait = { workspace = true }
