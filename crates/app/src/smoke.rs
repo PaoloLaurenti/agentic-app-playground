@@ -32,6 +32,7 @@ mod tests {
             }],
             max_tokens: 50,
             extra: serde_json::Value::Null,
+            prompt: None,
         }
     }
 

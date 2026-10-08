@@ -1,7 +1,7 @@
 //! The prompts the app sends, compiled into the binary from the files in `prompts/` (ADR 0009):
 //! a commit fixes exactly which prompt runs, and nothing at runtime can change it.
 
-use llm_core::{ContentBlock, Message, Role, SystemBlock};
+use llm_core::{ContentBlock, Message, PromptRef, Role, SystemBlock};
 use serde::{Deserialize, Serialize};
 
 /// A chat prompt as its file describes it, before its variables are filled in.
@@ -41,6 +41,8 @@ pub enum PromptError {
 /// A prompt with its variables filled in, in the shape an `LlmRequest` takes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rendered {
+    /// Which prompt and version this is, to be passed on in `LlmRequest.prompt`.
+    pub prompt: PromptRef,
     pub system: Vec<SystemBlock>,
     pub messages: Vec<Message>,
 }
@@ -58,6 +60,10 @@ impl Prompt {
     /// Fills in every `{{name}}` with its value from `vars`.
     pub fn render(&self, vars: &[(&str, &str)]) -> Result<Rendered, PromptError> {
         let mut rendered = Rendered {
+            prompt: PromptRef {
+                name: self.name.clone(),
+                version: self.version,
+            },
             system: vec![],
             messages: vec![],
         };
@@ -156,6 +162,10 @@ content = "My name is {{name}}."
         assert_eq!(
             rendered,
             Rendered {
+                prompt: PromptRef {
+                    name: "greeter".into(),
+                    version: 3,
+                },
                 system: vec![SystemBlock::Text("Greet the user by name.\n".into())],
                 messages: vec![Message {
                     role: Role::User,

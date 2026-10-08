@@ -59,6 +59,15 @@ fn record_request(span: &Span, req: &LlmRequest) {
         model_parameters(req).to_string(),
     );
     span.set_attribute("langfuse.observation.input", input(req).to_string());
+    // Links the generation to that prompt version in Langfuse, which then shows cost and latency
+    // per version. The version must be an integer, or Langfuse does not link it.
+    if let Some(prompt) = &req.prompt {
+        span.set_attribute("langfuse.observation.prompt.name", prompt.name.clone());
+        span.set_attribute(
+            "langfuse.observation.prompt.version",
+            i64::from(prompt.version),
+        );
+    }
 }
 
 /// The request as a list of `role`/`content` messages, the shape Langfuse renders as a
@@ -141,6 +150,7 @@ mod tests {
             }],
             max_tokens: 50,
             extra: json!({ "effort": "low" }),
+            prompt: None,
         }
     }
 

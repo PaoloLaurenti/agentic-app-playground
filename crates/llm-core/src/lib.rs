@@ -45,6 +45,13 @@ pub struct Message {
     pub content: Vec<ContentBlock>,
 }
 
+/// The prompt a request was built from, so that the call can be linked to that prompt's version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptRef {
+    pub name: String,
+    pub version: u32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LlmRequest {
     pub model: ModelId,
@@ -53,6 +60,8 @@ pub struct LlmRequest {
     pub max_tokens: u32,
     /// Model-specific fields, such as effort, passed to the provider as they are.
     pub extra: serde_json::Value,
+    /// The prompt the request was built from, when there is one. The provider ignores it.
+    pub prompt: Option<PromptRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +203,7 @@ mod tests {
             }],
             max_tokens: 50,
             extra: serde_json::Value::Null,
+            prompt: None,
         };
 
         let response = block_on(client.complete(request)).unwrap();
