@@ -5,6 +5,7 @@
 
 mod builder;
 mod generation;
+mod prompt_registry;
 mod reply_so_far;
 mod scores;
 mod scoring;
@@ -28,6 +29,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
 pub use builder::LlmClientBuilder;
+pub use prompt_registry::{PromptClient, PromptRegistry};
 pub use scores::{ScoreClient, Scores, current_trace_id};
 pub use scoring::{Evaluator, Verdict};
 
@@ -76,6 +78,13 @@ pub enum Error {
         status: reqwest::StatusCode,
         reason: String,
     },
+    #[error("Langfuse rejected the prompt request with status {status}: {reason}")]
+    PromptRejected {
+        status: reqwest::StatusCode,
+        reason: String,
+    },
+    #[error("Langfuse returned a prompt this app cannot read: {0}")]
+    UnexpectedPrompt(String),
 }
 
 /// Holds the exporter. Spans leave in batches from a background thread, so a short-lived

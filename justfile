@@ -12,3 +12,8 @@ test:
 [positional-arguments]
 run *args:
     cargo run -q -p app -- "$@"
+
+# Copies to Langfuse every prompt file whose text is not yet the version it names, and writes the
+# new version number back into the file (ADR 0009).
+prompts-push:
+    cargo run -q -p app -- prompts-push

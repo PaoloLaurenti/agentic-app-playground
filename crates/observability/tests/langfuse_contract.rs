@@ -1,12 +1,14 @@
 //! Contract tests against the real Langfuse project in `.env`: they check that what `ScoreClient`
-//! sends is what Langfuse accepts and stores. They need the network and the keys, so they are
+//! and `PromptClient` send is what Langfuse accepts and stores, and that every prompt file names a
+//! version whose text Langfuse holds. They need the network and the keys, so they are
 //! ignored by default: `cargo nextest run -p observability --run-ignored only`.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use observability::{LangfuseConfig, ScoreClient, Scores};
+use observability::{LangfuseConfig, PromptClient, PromptRegistry, ScoreClient, Scores};
+use prompts::Prompt;
 use serde_json::Value;
 
 fn env(name: &str) -> String {
@@ -72,6 +74,25 @@ impl LangfuseApi {
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
         None
+    }
+
+    async fn delete_prompt_version(&self, name: &str, version: u32) {
+        let response = self
+            .http
+            .delete(format!(
+                "{}/api/public/v2/prompts/{name}?version={version}",
+                self.host
+            ))
+            .header("Authorization", &self.authorization)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        assert!(
+            status.is_success(),
+            "delete: {status} {}",
+            response.text().await.unwrap()
+        );
     }
 
     async fn delete_score(&self, id: &str) {
@@ -152,4 +173,71 @@ async fn false_is_stored_as_false() {
         stored.expect("the score never showed up in Langfuse")["value"],
         false
     );
+}
+
+/// Every prompt in the repository's `prompts/` folder.
+fn repository_prompts() -> Vec<Prompt> {
+    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "toml")
+        })
+        .map(|path| Prompt::from_toml(&std::fs::read_to_string(&path).unwrap()).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+#[ignore = "talks to the real Langfuse project in .env"]
+async fn every_prompt_file_has_the_text_of_the_version_it_names() {
+    let registry: &dyn PromptRegistry = &PromptClient::new(&langfuse_from_env());
+    let files = repository_prompts();
+    assert!(!files.is_empty(), "no prompt files found");
+
+    for file in files {
+        let stored = registry
+            .version(&file.name, file.version)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("{} v{} is not in Langfuse", file.name, file.version));
+        assert_eq!(stored, file);
+    }
+}
+
+#[tokio::test]
+#[ignore = "talks to the real Langfuse project in .env"]
+async fn a_created_version_reads_back_with_its_messages_and_config() {
+    let config = langfuse_from_env();
+    let registry: &dyn PromptRegistry = &PromptClient::new(&config);
+    // A text that no earlier run used, so that Langfuse stores a new version.
+    let prompt = Prompt::from_toml(&format!(
+        r#"
+name = "contract-test"
+version = 0
+
+[config]
+max_tokens = 10
+
+[[messages]]
+role = "system"
+content = "Run {}."
+
+[[messages]]
+role = "user"
+content = "<message>{{{{message}}}}</message>"
+"#,
+        unused_trace_id()
+    ))
+    .unwrap();
+
+    let version = registry.create(&prompt).await.unwrap();
+    let stored = registry.version(&prompt.name, version).await;
+    LangfuseApi::new(&config)
+        .delete_prompt_version(&prompt.name, version)
+        .await;
+
+    let stored = stored.unwrap().expect("the new version is not in Langfuse");
+    assert_eq!(stored, Prompt { version, ..prompt });
 }
