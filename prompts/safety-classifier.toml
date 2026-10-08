@@ -1,10 +1,9 @@
 name = "safety-classifier"
 # The version Langfuse gave this text. Written by `just prompts-push`, never by hand.
-version = 3
+version = 4
 
 [config]
 model_role = "fast"
-effort = "low"
 max_tokens = 1024
 output_schema = "safety_verdict"
 
