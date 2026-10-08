@@ -253,6 +253,7 @@ async fn hello(args: HelloArgs, scores: Option<Arc<dyn Scores>>) -> Result<()> {
         max_tokens: args.max_tokens,
         extra: serde_json::Value::Null,
         prompt: None,
+        output_schema: None,
     };
 
     // Built once and reused by every call: loading the configuration and the credentials is the

@@ -151,6 +151,7 @@ mod tests {
             max_tokens: 50,
             extra: json!({ "effort": "low" }),
             prompt: None,
+            output_schema: None,
         }
     }
 
