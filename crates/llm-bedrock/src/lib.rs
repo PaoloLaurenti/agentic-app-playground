@@ -17,8 +17,8 @@ use aws_smithy_types::{Document, Number};
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use llm_core::{
-    ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId, Role,
-    StopReason, SystemBlock, Usage,
+    ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId,
+    OutputSchema, Role, StopReason, SystemBlock, Usage,
 };
 
 /// A Bedrock Runtime client for one region.
@@ -145,6 +145,7 @@ impl BedrockClient {
             .set_messages(Some(request.messages))
             .inference_config(request.inference_config)
             .set_additional_model_request_fields(request.additional_fields)
+            .set_output_config(request.output_config)
             .send()
             .await
             .map_err(|err| from_sdk_error(err, from_converse_error))?;
@@ -161,6 +162,7 @@ impl BedrockClient {
             .set_messages(Some(request.messages))
             .inference_config(request.inference_config)
             .set_additional_model_request_fields(request.additional_fields)
+            .set_output_config(request.output_config)
             .send()
             .await
             .map_err(|err| from_sdk_error(err, from_converse_stream_error))?;
@@ -192,6 +194,8 @@ struct SdkRequest {
     /// Model-specific fields, such as effort for Claude, which Bedrock passes to the model as they
     /// are. The fields every model shares go in `inference_config` instead.
     additional_fields: Option<Document>,
+    /// The JSON Schema the reply must follow, when the caller asked for structured output.
+    output_config: Option<sdk::OutputConfig>,
 }
 
 impl TryFrom<&LlmRequest> for SdkRequest {
@@ -214,6 +218,7 @@ impl TryFrom<&LlmRequest> for SdkRequest {
                 )));
             }
         };
+        let output_config = req.output_schema.as_ref().map(to_sdk_output).transpose()?;
         Ok(Self {
             system: (!system.is_empty()).then_some(system),
             messages,
@@ -221,8 +226,25 @@ impl TryFrom<&LlmRequest> for SdkRequest {
                 .max_tokens(max_tokens)
                 .build(),
             additional_fields,
+            output_config,
         })
     }
+}
+
+/// Structured output through Converse's own field, `outputConfig.textFormat`, which takes the
+/// schema as a JSON string.
+fn to_sdk_output(output: &OutputSchema) -> Result<sdk::OutputConfig, LlmError> {
+    let definition = sdk::JsonSchemaDefinition::builder()
+        .name(&output.name)
+        .schema(output.schema.to_string())
+        .build()
+        .map_err(invalid)?;
+    let format = sdk::OutputFormat::builder()
+        .r#type(sdk::OutputFormatType::JsonSchema)
+        .structure(sdk::OutputFormatStructure::JsonSchema(definition))
+        .build()
+        .map_err(invalid)?;
+    Ok(sdk::OutputConfig::builder().text_format(format).build())
 }
 
 /// Converts JSON into the SDK's own JSON type, which Converse expects for model-specific fields.
@@ -760,6 +782,7 @@ mod tests {
             max_tokens: 50,
             extra,
             prompt: None,
+            output_schema: None,
         }
     }
 
@@ -885,6 +908,42 @@ mod tests {
         let prepared = offline_client().prepare(request.clone());
 
         assert_eq!(prepared, request);
+    }
+
+    #[test]
+    fn an_output_schema_becomes_a_json_schema_text_format() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "label": { "type": "string", "enum": ["SAFE", "PSYCH_CRISIS"] } },
+            "required": ["label"],
+            "additionalProperties": false,
+        });
+        let request = LlmRequest {
+            output_schema: Some(llm_core::OutputSchema {
+                name: "Verdict".into(),
+                schema: schema.clone(),
+            }),
+            ..request_with_extra(serde_json::Value::Null)
+        };
+
+        let request = SdkRequest::try_from(&request).unwrap();
+
+        let format = request
+            .output_config
+            .and_then(|config| config.text_format)
+            .expect("no text format");
+        assert_eq!(format.r#type(), &sdk::OutputFormatType::JsonSchema);
+        let definition = format.structure().unwrap().as_json_schema().unwrap();
+        assert_eq!(definition.name(), Some("Verdict"));
+        let sent: serde_json::Value = serde_json::from_str(definition.schema()).unwrap();
+        assert_eq!(sent, schema);
+    }
+
+    #[test]
+    fn without_an_output_schema_no_output_config_is_sent() {
+        let request = SdkRequest::try_from(&request_with_extra(serde_json::Value::Null)).unwrap();
+
+        assert!(request.output_config.is_none());
     }
 
     #[test]

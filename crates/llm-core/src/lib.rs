@@ -52,6 +52,14 @@ pub struct PromptRef {
     pub version: u32,
 }
 
+/// A JSON Schema the reply must follow, so that it can be parsed rather than read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputSchema {
+    /// A short name for the schema, such as the Rust type it was generated from.
+    pub name: String,
+    pub schema: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LlmRequest {
     pub model: ModelId,
@@ -62,6 +70,8 @@ pub struct LlmRequest {
     pub extra: serde_json::Value,
     /// The prompt the request was built from, when there is one. The provider ignores it.
     pub prompt: Option<PromptRef>,
+    /// The schema the reply must follow, when the caller wants structured output.
+    pub output_schema: Option<OutputSchema>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +214,7 @@ mod tests {
             max_tokens: 50,
             extra: serde_json::Value::Null,
             prompt: None,
+            output_schema: None,
         };
 
         let response = block_on(client.complete(request)).unwrap();

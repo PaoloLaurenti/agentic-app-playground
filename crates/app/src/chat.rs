@@ -79,6 +79,7 @@ pub async fn chat(args: ChatArgs, scores: Option<Arc<dyn Scores>>) -> Result<()>
             max_tokens: args.max_tokens,
             extra: serde_json::Value::Null,
             prompt: None,
+            output_schema: None,
         };
         let response = turn(client.as_ref(), request, text, &session_id, &args.user).await?;
 
