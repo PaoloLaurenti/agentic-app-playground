@@ -759,6 +759,7 @@ mod tests {
             }],
             max_tokens: 50,
             extra,
+            prompt: None,
         }
     }
 

@@ -179,6 +179,46 @@ mod tests {
     }
 
     #[test]
+    fn with_tracing_the_generation_names_the_prompt_and_version_it_used() {
+        let client = LlmClientBuilder::new(FakeClient::default())
+            .with_tracing()
+            .build();
+        let request = LlmRequest {
+            prompt: Some(llm_core::PromptRef {
+                name: "safety-classifier".into(),
+                version: 2,
+            }),
+            ..request()
+        };
+
+        let spans = exported_spans(|| {
+            block_on(client.complete(request)).unwrap();
+        });
+
+        let attributes = &spans[0].attributes;
+        assert_eq!(
+            attributes["langfuse.observation.prompt.name"],
+            "safety-classifier"
+        );
+        assert_eq!(attributes["langfuse.observation.prompt.version"], "2");
+    }
+
+    #[test]
+    fn with_tracing_a_generation_without_a_prompt_names_none() {
+        let client = LlmClientBuilder::new(FakeClient::default())
+            .with_tracing()
+            .build();
+
+        let spans = exported_spans(|| {
+            block_on(client.complete(request())).unwrap();
+        });
+
+        let attributes = &spans[0].attributes;
+        assert!(!attributes.contains_key("langfuse.observation.prompt.name"));
+        assert!(!attributes.contains_key("langfuse.observation.prompt.version"));
+    }
+
+    #[test]
     fn with_scoring_every_verdict_is_sent_to_the_current_trace() {
         let scores = Arc::new(RecordedScores::default());
         let client = LlmClientBuilder::new(FakeClient::default())

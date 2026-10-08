@@ -29,6 +29,7 @@ async fn effort_sent_to_a_model_that_rejects_it_does_not_fail_the_call() {
         }],
         max_tokens: 50,
         extra: serde_json::json!({ "output_config": { "effort": "low" } }),
+        prompt: None,
     };
 
     let response = client.complete(request).await.unwrap();
