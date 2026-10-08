@@ -268,6 +268,16 @@ content = "{{first}} and {{second}}"
     }
 
     #[test]
+    fn the_safety_classifier_names_the_schema_of_its_verdict() {
+        let prompt = safety_classifier().unwrap();
+
+        assert_eq!(
+            prompt.config["output_schema"],
+            SafetyVerdict::output_schema().name
+        );
+    }
+
+    #[test]
     fn a_verdict_reads_each_label_the_safety_classifier_asks_for() {
         for (label, expected) in [
             ("SAFE", SafetyLabel::Safe),
