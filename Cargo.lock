@@ -80,6 +80,7 @@ dependencies = [
  "llm-core",
  "observability",
  "prompts",
+ "serde",
  "serde_json",
  "tokio",
  "toml_edit",

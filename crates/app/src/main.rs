@@ -4,6 +4,7 @@ mod chat;
 mod output;
 mod pricing;
 mod prompts_push;
+mod safety_eval;
 mod smoke;
 
 use std::io::Write;
@@ -38,6 +39,8 @@ enum Command {
     Chat(chat::ChatArgs),
     /// Copy to Langfuse every prompt file whose text is not yet the version it names.
     PromptsPush,
+    /// Run the safety classifier over a labelled dataset and report how it did.
+    SafetyEval(safety_eval::SafetyEvalArgs),
 }
 
 #[derive(Args)]
@@ -63,7 +66,7 @@ struct HelloArgs {
 }
 
 /// A model is chosen by its role, and `.env` says which model plays it.
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum ModelRole {
     Fast,
     Main,
@@ -112,6 +115,7 @@ async fn run() -> Result<()> {
         Command::Hello(args) => hello(args, scores).await,
         Command::Chat(args) => chat::chat(args, scores).await,
         Command::PromptsPush => prompts_push::push_all(langfuse_config()?).await,
+        Command::SafetyEval(args) => safety_eval::safety_eval(args, scores).await,
     };
     // On failure too: the spans of a failed call are the ones worth reading.
     telemetry.shutdown()?;
