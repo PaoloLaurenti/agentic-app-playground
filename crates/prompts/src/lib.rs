@@ -1,7 +1,8 @@
 //! The prompts the app sends, compiled into the binary from the files in `prompts/` (ADR 0009):
 //! a commit fixes exactly which prompt runs, and nothing at runtime can change it.
 
-use llm_core::{ContentBlock, Message, PromptRef, Role, SystemBlock};
+use llm_core::{ContentBlock, Message, OutputSchema, PromptRef, Role, SystemBlock};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// A chat prompt as its file describes it, before its variables are filled in.
@@ -50,6 +51,36 @@ pub struct Rendered {
 /// The `SAFETY` step's classifier: one variable, `message`.
 pub fn safety_classifier() -> Result<Prompt, PromptError> {
     Prompt::from_toml(include_str!("../../../prompts/safety-classifier.toml"))
+}
+
+/// The safety classifier's reply.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SafetyVerdict {
+    pub label: SafetyLabel,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SafetyLabel {
+    Safe,
+    PsychCrisis,
+    MedicalEmergency,
+}
+
+impl SafetyVerdict {
+    /// The schema the model's reply must follow, generated from this type so that the two cannot
+    /// drift apart. Subschemas are inlined, so the label's values sit where the field is.
+    pub fn output_schema() -> OutputSchema {
+        let generator = schemars::generate::SchemaSettings::default()
+            .with(|settings| settings.inline_subschemas = true)
+            .into_generator();
+        OutputSchema {
+            name: "safety_verdict".into(),
+            schema: generator.into_root_schema_for::<Self>().to_value(),
+        }
+    }
 }
 
 impl Prompt {
@@ -234,5 +265,47 @@ content = "{{first}} and {{second}}"
             .unwrap();
 
         assert_eq!(user_text(&rendered), "{{second}} and Rossi");
+    }
+
+    #[test]
+    fn a_verdict_reads_each_label_the_safety_classifier_asks_for() {
+        for (label, expected) in [
+            ("SAFE", SafetyLabel::Safe),
+            ("PSYCH_CRISIS", SafetyLabel::PsychCrisis),
+            ("MEDICAL_EMERGENCY", SafetyLabel::MedicalEmergency),
+        ] {
+            let reply = format!(r#"{{"label": "{label}", "reason": "One short sentence."}}"#);
+
+            let verdict: SafetyVerdict = serde_json::from_str(&reply).unwrap();
+
+            assert_eq!(
+                verdict,
+                SafetyVerdict {
+                    label: expected,
+                    reason: "One short sentence.".into(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_verdict_with_any_other_label_is_an_error() {
+        let reply = r#"{"label": "URGENT", "reason": "One short sentence."}"#;
+
+        assert!(serde_json::from_str::<SafetyVerdict>(reply).is_err());
+    }
+
+    #[test]
+    fn the_verdict_schema_asks_for_a_label_among_three_and_a_reason_and_nothing_else() {
+        let OutputSchema { name, schema } = SafetyVerdict::output_schema();
+
+        assert_eq!(name, "safety_verdict");
+        assert_eq!(schema["required"], serde_json::json!(["label", "reason"]));
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(
+            schema["properties"]["label"]["enum"],
+            serde_json::json!(["SAFE", "PSYCH_CRISIS", "MEDICAL_EMERGENCY"])
+        );
+        assert_eq!(schema["properties"]["reason"]["type"], "string");
     }
 }

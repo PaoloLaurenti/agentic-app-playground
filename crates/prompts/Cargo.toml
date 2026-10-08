@@ -5,7 +5,13 @@ edition = "2024"
 
 [dependencies]
 llm-core = { version = "0.1.0", path = "../llm-core" }
+schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = "2.0.21"
 toml = "1.1.6"
+
+[dev-dependencies]
+dotenvy = "0.15.7"
+llm-bedrock = { version = "0.1.0", path = "../llm-bedrock" }
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
