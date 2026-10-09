@@ -37,7 +37,8 @@ pub fn measure_line(measure: &Measure, cost: Option<f64>) -> String {
 
 /// An error as one readable line, with what to do about it when that is known.
 pub fn error_message(err: &anyhow::Error, aws_profile: &str) -> String {
-    let text = err.to_string();
+    // The whole chain, so that a context added on the way up does not hide the cause.
+    let text = format!("{err:#}");
     if text.contains("Session token not found or invalid") {
         return format!("AWS credentials expired, run: aws sso login --profile {aws_profile}");
     }
@@ -162,6 +163,35 @@ mod tests {
         assert_eq!(
             error_message(&err, "bedrock-playground"),
             "AWS credentials expired, run: aws sso login --profile bedrock-playground"
+        );
+    }
+
+    #[test]
+    fn expired_aws_credentials_under_a_context_still_say_how_to_log_in_again() {
+        let err = anyhow::anyhow!(
+            "dispatch failure: other: service error: UnauthorizedException: Session token not \
+             found or invalid (DispatchFailure(…))"
+        )
+        .context("classifying safety-001");
+
+        assert_eq!(
+            error_message(&err, "bedrock-playground"),
+            "AWS credentials expired, run: aws sso login --profile bedrock-playground"
+        );
+    }
+
+    #[test]
+    fn an_error_under_a_context_shows_the_context_and_its_cause() {
+        let err = anyhow::anyhow!(
+            "invalid request: ValidationException: The provided model identifier is invalid. \
+             (ValidationError(ValidationException {{ message: Some(\"…\") }}))"
+        )
+        .context("classifying safety-001");
+
+        assert_eq!(
+            error_message(&err, "bedrock-playground"),
+            "classifying safety-001: invalid request: ValidationException: The provided model \
+             identifier is invalid."
         );
     }
 
