@@ -6,7 +6,7 @@
 use std::time::SystemTime;
 
 use opentelemetry::trace::TraceContextExt;
-use serde_json::json;
+use serde_json::{Value, json};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{Error, LangfuseConfig, basic_authorization};
@@ -73,6 +73,22 @@ impl Scores for ScoreClient {
         if !status.is_success() {
             let reason = response.text().await.unwrap_or_default();
             return Err(Error::ScoreRejected { status, reason });
+        }
+        // A rejected event does not fail the request: the answer is `207`, and the event is listed
+        // under `errors` with a status and a message of its own.
+        let answer: Value = response.json().await?;
+        if let Some(rejected) = answer["errors"]
+            .as_array()
+            .and_then(|errors| errors.first())
+        {
+            return Err(Error::ScoreRejected {
+                status: rejected["status"]
+                    .as_u64()
+                    .and_then(|status| u16::try_from(status).ok())
+                    .and_then(|status| reqwest::StatusCode::from_u16(status).ok())
+                    .unwrap_or(status),
+                reason: rejected.to_string(),
+            });
         }
         Ok(id)
     }

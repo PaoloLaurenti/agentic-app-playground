@@ -155,6 +155,23 @@ async fn a_rejected_score_is_an_error_with_the_status() {
     assert!(err.contains("401"), "{err}");
 }
 
+/// The ingestion API answers `207` when it rejects an event, with the reason in the body, so a
+/// rejected score is not a failed request (ADR 0010).
+#[tokio::test]
+#[ignore = "talks to the real Langfuse project in .env"]
+async fn a_score_the_ingestion_rejects_is_an_error() {
+    let config = langfuse_from_env();
+    let scores: &dyn Scores = &ScoreClient::new(&config);
+
+    let err = scores
+        .boolean(&unused_trace_id(), "", true)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("400"), "{err}");
+}
+
 #[tokio::test]
 #[ignore = "talks to the real Langfuse project in .env"]
 async fn false_is_stored_as_false() {
