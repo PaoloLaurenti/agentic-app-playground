@@ -1,9 +1,12 @@
 //! Scores: judgments attached to a trace after the fact, such as a smoke check, a guardrail verdict
 //! or a user's thumbs up. A score is not a span, so it does not travel over OpenTelemetry: it is a
-//! call of its own to the Langfuse public API, `POST /api/public/scores`.
+//! `score-create` event sent to the Langfuse ingestion API, `POST /api/public/ingestion`, whose rate
+//! limit is far above that of `POST /api/public/scores` (ADR 0010).
+
+use std::time::SystemTime;
 
 use opentelemetry::trace::TraceContextExt;
-use serde_json::{Value, json};
+use serde_json::json;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{Error, LangfuseConfig, basic_authorization};
@@ -28,7 +31,7 @@ impl ScoreClient {
     pub fn new(config: &LangfuseConfig) -> Self {
         Self {
             http: reqwest::Client::new(),
-            endpoint: format!("{}/api/public/scores", config.host.trim_end_matches('/')),
+            endpoint: format!("{}/api/public/ingestion", config.host.trim_end_matches('/')),
             authorization: basic_authorization(config),
             // The score is filed under the same environment as the traces it judges.
             environment: config.environment.clone(),
@@ -39,14 +42,25 @@ impl ScoreClient {
 #[async_trait::async_trait]
 impl Scores for ScoreClient {
     async fn boolean(&self, trace_id: &str, name: &str, value: bool) -> Result<String, Error> {
+        // The client chooses the score's id, since the event carries it.
+        let id = uuid::Uuid::new_v4().to_string();
         // Langfuse takes a boolean as the number 1 or 0 with the `BOOLEAN` data type; without the
         // data type it would file the score as numeric.
         let body = json!({
-            "traceId": trace_id,
-            "name": name,
-            "value": if value { 1 } else { 0 },
-            "dataType": "BOOLEAN",
-            "environment": self.environment,
+            "batch": [{
+                // The event's own id, which Langfuse uses to drop a duplicate delivery.
+                "id": uuid::Uuid::new_v4().to_string(),
+                "type": "score-create",
+                "timestamp": humantime::format_rfc3339_millis(SystemTime::now()).to_string(),
+                "body": {
+                    "id": id,
+                    "traceId": trace_id,
+                    "name": name,
+                    "value": if value { 1 } else { 0 },
+                    "dataType": "BOOLEAN",
+                    "environment": self.environment,
+                },
+            }],
         });
         let response = self
             .http
@@ -60,8 +74,7 @@ impl Scores for ScoreClient {
             let reason = response.text().await.unwrap_or_default();
             return Err(Error::ScoreRejected { status, reason });
         }
-        let created: Value = response.json().await?;
-        Ok(created["id"].as_str().unwrap_or_default().to_owned())
+        Ok(id)
     }
 }
 

@@ -175,6 +175,35 @@ async fn false_is_stored_as_false() {
     );
 }
 
+/// Langfuse Cloud's Hobby plan allows 30 requests a minute to its general API, shared by the whole
+/// organization (ADR 0010). The scores are filed under an environment of their own and not
+/// deleted, since deleting them one by one would run into the same limit.
+#[tokio::test]
+#[ignore = "talks to the real Langfuse project in .env"]
+async fn a_burst_of_scores_above_the_general_api_limit_is_all_accepted() {
+    let config = LangfuseConfig {
+        environment: "contract-test".into(),
+        ..langfuse_from_env()
+    };
+    let scores: &dyn Scores = &ScoreClient::new(&config);
+
+    let mut rejected = vec![];
+    for _ in 0..35 {
+        if let Err(err) = scores
+            .boolean(&unused_trace_id(), "contract_test_burst", true)
+            .await
+        {
+            rejected.push(err.to_string());
+        }
+    }
+
+    assert!(
+        rejected.is_empty(),
+        "{} rejected: {rejected:?}",
+        rejected.len()
+    );
+}
+
 /// Every prompt in the repository's `prompts/` folder.
 fn repository_prompts() -> Vec<Prompt> {
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
