@@ -1,7 +1,7 @@
 # 0007 · Scores through the public API, as a decorator assembled by a builder
 
 - Date: 2026-10-07
-- Status: accepted
+- Status: accepted; the endpoint of option 2 superseded by 0010
 
 ## Context
 
