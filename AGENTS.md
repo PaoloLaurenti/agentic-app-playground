@@ -63,7 +63,7 @@ crates/observability  Langfuse: tracing, scores, the prompt registry; LlmClientB
 crates/prompts        the prompts compiled into the binary, and their rendering
 prompts/              one TOML file per prompt, with the version Langfuse gave it
 datasets/             test cases in JSONL, one folder per step, synthetic only
-justfile              the check, test, run and prompts-push recipes
+justfile              the check, test, run, prompts-push and langfuse recipes
 .github/workflows/    CI: just check and just test on every pull request
 .env.example          the configuration variables, without values
 TUTORIAL.md           the learning path, 16 modules

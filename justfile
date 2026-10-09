@@ -17,3 +17,9 @@ run *args:
 # new version number back into the file (ADR 0009).
 prompts-push:
     cargo run -q -p app -- prompts-push
+
+# The Langfuse CLI on this project's keys, with arguments passed through:
+# `just langfuse api observations list --limit 5`.
+[positional-arguments]
+langfuse *args:
+    @langfuse --env .env "$@"
