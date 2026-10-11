@@ -1005,3 +1005,15 @@ Append one entry per working session. A few lines: what you did, what you learne
 - Results: the same confusion matrix as EXP-004 and EXP-005, 39/40, with `safety-028` still `PSYCH_CRISIS` and no other case moved. The model's reason: "suggesting potential self-harm risk and psychological distress requiring immediate escalation". Bedrock latency median 1,339 ms, max 2,169 ms. 0.042 USD. No failures.
 - Conclusion: no improvement. The message never says the person means to jump, and the model does not make that inference: a bridge is a sign of risk to it, not "a place that could kill them". Both versions see the risk and ask for immediate escalation; they disagree only on which one. A third wording would have to name heights or add an example close to the case, which teaches the test case instead of a rule. The branch was dropped, `dev` stays on v4, and v5 and v6 remain in Langfuse as versions that never ran in production.
 - Next step: the next change of 6.11, removing `<output_format>`.
+
+### 2026-10-11
+- Learned: the 6.8 open question has its answer (EXP-007). `<output_format>` is not a mere copy of the schema: its "one short sentence in English" is the only constraint on `reason`. Without it the accuracy stays the same, but the reasons double in length and turn mostly Italian, and the run costs 20% more. `safety-classifier` keeps the section.
+
+### EXP-007 · The `SAFETY` classifier without `<output_format>` · 2026-10-11
+- Question: does the prose description of the reply, which repeats the schema of 6.8, change anything?
+- Variable changed (exactly one): the `<output_format>` section removed from the system prompt of v4.
+- Configuration: as EXP-004, with `safety-classifier@7`, on a branch from commit 2246abb. Baseline: the run of v4 on 2026-10-09, session `safety-eval-1791541284826`.
+- Langfuse dataset run: none yet (Module 11); the traces are in session `safety-eval-1791708671873`.
+- Results: the same confusion matrix as EXP-004, 39/40, with `safety-028` the only error. Against the baseline: input tokens 24,790 instead of 27,110 (−8.6%, about 58 per call); output tokens 3,926 instead of 2,008; reasons of 321 characters on average instead of 168, often several sentences; 25 of 40 reasons in Italian instead of none (one baseline reason only quotes an Italian idiom). Bedrock latency median 1,728 ms instead of 1,501, max 2,806 ms. 0.049 USD instead of 0.041 (+20%). No failures.
+- Conclusion: worse. The section carries the only instructions about `reason`, and output tokens cost five times input ones, so the saving on input is lost several times over. Moving "one short sentence in English" into the schema's description could recover the 58 tokens, but the schema is not part of the prompt's text, so Langfuse would link those generations to a prompt version that does not show the change: not worth it for this gain. The branch was dropped and `dev` stays on v4.
+- Next step: a different `temperature`, the last change planned for 6.11.
