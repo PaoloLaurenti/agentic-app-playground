@@ -85,10 +85,11 @@ impl LlmClient for BedrockClient {
 
         // The SDK hands out a receiver to pull events from, not a `Stream`: `unfold` turns one
         // into the other. The state becomes `None` after an error, which ends the stream.
-        let events = futures::stream::unfold(Some(receiver), |state| async move {
-            let mut receiver = state?;
-            match next_event(&mut receiver).await? {
-                Ok(event) => Some((Ok(event), Some(receiver))),
+        let state = (receiver, StreamTranslator::default());
+        let events = futures::stream::unfold(Some(state), |state| async move {
+            let (mut receiver, mut translator) = state?;
+            match next_event(&mut receiver, &mut translator).await? {
+                Ok(event) => Some((Ok(event), Some((receiver, translator)))),
                 Err(err) => Some((Err(err), None)),
             }
         });
@@ -173,12 +174,15 @@ impl BedrockClient {
     }
 }
 
-/// The next event worth passing on, skipping the ones `from_stream_event` ignores; `None` when
-/// the stream is over.
-async fn next_event(receiver: &mut StreamReceiver) -> Option<Result<LlmEvent, LlmError>> {
+/// The next event worth passing on, skipping the ones the translator holds or ignores; `None`
+/// when the stream is over.
+async fn next_event(
+    receiver: &mut StreamReceiver,
+    translator: &mut StreamTranslator,
+) -> Option<Result<LlmEvent, LlmError>> {
     loop {
         match receiver.recv().await {
-            Ok(Some(event)) => match from_stream_event(&event) {
+            Ok(Some(event)) => match translator.translate(&event) {
                 Ok(Some(event)) => return Some(Ok(event)),
                 Ok(None) => continue,
                 Err(err) => return Some(Err(err)),
@@ -495,8 +499,87 @@ fn from_sdk_output(output: &ConverseOutput) -> Result<LlmResponse, LlmError> {
     })
 }
 
-/// Translates one stream event. Only text, the stop reason and the final counts matter for now;
-/// the other events, such as the start and end of a block, give `None`.
+/// Translates the events of one stream. Text, the stop reason and the final counts pass through
+/// one at a time. A tool request arrives in pieces: its id and name when its block starts, its
+/// input as pieces of a JSON string, so it is held by block index and sent whole when the block
+/// ends. Other events, such as reasoning, give `None`.
+#[derive(Default)]
+struct StreamTranslator {
+    tool_uses: HashMap<i32, PendingToolUse>,
+}
+
+/// A tool request whose block has not ended yet.
+struct PendingToolUse {
+    id: ToolUseId,
+    name: ToolName,
+    input: String,
+}
+
+impl StreamTranslator {
+    fn translate(
+        &mut self,
+        event: &sdk::ConverseStreamOutput,
+    ) -> Result<Option<LlmEvent>, LlmError> {
+        match event {
+            sdk::ConverseStreamOutput::ContentBlockStart(start) => {
+                if let Some(sdk::ContentBlockStart::ToolUse(tool_use)) = start.start() {
+                    let name = ToolName::new(tool_use.name())
+                        .map_err(|err| LlmError::Other(err.to_string()))?;
+                    let pending = PendingToolUse {
+                        id: ToolUseId::new(tool_use.tool_use_id()),
+                        name,
+                        input: String::new(),
+                    };
+                    self.tool_uses.insert(start.content_block_index(), pending);
+                }
+                Ok(None)
+            }
+            sdk::ConverseStreamOutput::ContentBlockDelta(delta) => match delta.delta() {
+                Some(sdk::ContentBlockDelta::ToolUse(piece)) => {
+                    let index = delta.content_block_index();
+                    let pending = self.tool_uses.get_mut(&index).ok_or_else(|| {
+                        LlmError::Other(format!(
+                            "tool input for block {index}, which is no tool request"
+                        ))
+                    })?;
+                    pending.input.push_str(piece.input());
+                    Ok(None)
+                }
+                _ => from_stream_event(event),
+            },
+            sdk::ConverseStreamOutput::ContentBlockStop(stop) => {
+                match self.tool_uses.remove(&stop.content_block_index()) {
+                    Some(pending) => pending.into_event().map(Some),
+                    None => Ok(None),
+                }
+            }
+            _ => from_stream_event(event),
+        }
+    }
+}
+
+impl PendingToolUse {
+    fn into_event(self) -> Result<LlmEvent, LlmError> {
+        // A tool without arguments streams no input at all, not `{}`.
+        let text = if self.input.is_empty() {
+            "{}"
+        } else {
+            &self.input
+        };
+        let input = serde_json::from_str(text).map_err(|err| {
+            LlmError::Other(format!(
+                "the input of tool {} is not a JSON object: {err}",
+                self.name.as_str()
+            ))
+        })?;
+        Ok(LlmEvent::ToolUse {
+            id: self.id,
+            name: self.name,
+            input,
+        })
+    }
+}
+
 fn from_stream_event(event: &sdk::ConverseStreamOutput) -> Result<Option<LlmEvent>, LlmError> {
     match event {
         sdk::ConverseStreamOutput::ContentBlockDelta(delta) => match delta.delta() {
@@ -963,6 +1046,110 @@ mod tests {
         ));
     }
 
+    fn tool_use_start(index: i32) -> sdk::ConverseStreamOutput {
+        sdk::ConverseStreamOutput::ContentBlockStart(
+            sdk::ContentBlockStartEvent::builder()
+                .content_block_index(index)
+                .start(sdk::ContentBlockStart::ToolUse(
+                    sdk::ToolUseBlockStart::builder()
+                        .tool_use_id("tooluse_kZJMlvQmRJ6eAyJE5GIl7Q")
+                        .name("get_current_date")
+                        .build()
+                        .unwrap(),
+                ))
+                .build()
+                .unwrap(),
+        )
+    }
+
+    fn tool_input_piece(index: i32, piece: &str) -> sdk::ConverseStreamOutput {
+        sdk::ConverseStreamOutput::ContentBlockDelta(
+            sdk::ContentBlockDeltaEvent::builder()
+                .content_block_index(index)
+                .delta(sdk::ContentBlockDelta::ToolUse(
+                    sdk::ToolUseBlockDelta::builder()
+                        .input(piece)
+                        .build()
+                        .unwrap(),
+                ))
+                .build()
+                .unwrap(),
+        )
+    }
+
+    fn block_stop(index: i32) -> sdk::ConverseStreamOutput {
+        sdk::ConverseStreamOutput::ContentBlockStop(
+            sdk::ContentBlockStopEvent::builder()
+                .content_block_index(index)
+                .build()
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_streamed_tool_request_is_one_event_once_its_block_ends() {
+        let mut translator = StreamTranslator::default();
+
+        let held = [
+            tool_use_start(1),
+            tool_input_piece(1, r#"{"time_zone":"#),
+            tool_input_piece(1, r#""Europe/Rome"}"#),
+        ]
+        .iter()
+        .map(|event| translator.translate(event).unwrap())
+        .collect::<Vec<_>>();
+        let at_stop = translator.translate(&block_stop(1)).unwrap();
+
+        assert_eq!(held, [None, None, None]);
+        let input = serde_json::json!({ "time_zone": "Europe/Rome" });
+        assert_eq!(
+            at_stop,
+            Some(LlmEvent::ToolUse {
+                id: ToolUseId::new("tooluse_kZJMlvQmRJ6eAyJE5GIl7Q"),
+                name: ToolName::new("get_current_date").unwrap(),
+                input: input.as_object().unwrap().clone(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_streamed_tool_request_without_input_has_an_empty_object() {
+        let mut translator = StreamTranslator::default();
+        translator.translate(&tool_use_start(1)).unwrap();
+
+        let at_stop = translator.translate(&block_stop(1)).unwrap();
+
+        assert_eq!(
+            at_stop,
+            Some(LlmEvent::ToolUse {
+                id: ToolUseId::new("tooluse_kZJMlvQmRJ6eAyJE5GIl7Q"),
+                name: ToolName::new("get_current_date").unwrap(),
+                input: serde_json::Map::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn streamed_tool_input_that_is_not_a_json_object_is_an_error() {
+        for pieces in [
+            [r#"{"time_zone":"#, r#""Europe/Rome""#],
+            [r#"["Europe/"#, r#"Rome"]"#],
+        ] {
+            let mut translator = StreamTranslator::default();
+            translator.translate(&tool_use_start(1)).unwrap();
+            for piece in pieces {
+                translator.translate(&tool_input_piece(1, piece)).unwrap();
+            }
+
+            let result = translator.translate(&block_stop(1));
+
+            assert!(
+                matches!(result, Err(LlmError::Other(_))),
+                "{pieces:?}: {result:?}"
+            );
+        }
+    }
+
     #[test]
     fn stream_events_become_text_deltas_a_stop_and_the_final_counts() {
         let text = sdk::ConverseStreamOutput::ContentBlockDelta(
@@ -1012,18 +1199,20 @@ mod tests {
                 .build(),
         );
 
+        let mut translator = StreamTranslator::default();
+
         assert_eq!(
-            from_stream_event(&text).unwrap(),
+            translator.translate(&text).unwrap(),
             Some(LlmEvent::TextDelta("Rea".into()))
         );
-        assert_eq!(from_stream_event(&reasoning).unwrap(), None);
-        assert_eq!(from_stream_event(&start).unwrap(), None);
+        assert_eq!(translator.translate(&reasoning).unwrap(), None);
+        assert_eq!(translator.translate(&start).unwrap(), None);
         assert_eq!(
-            from_stream_event(&stop).unwrap(),
+            translator.translate(&stop).unwrap(),
             Some(LlmEvent::Stop(StopReason::MaxTokens))
         );
         assert_eq!(
-            from_stream_event(&metadata).unwrap(),
+            translator.translate(&metadata).unwrap(),
             Some(LlmEvent::Metadata {
                 usage: Usage {
                     input_tokens: 15,

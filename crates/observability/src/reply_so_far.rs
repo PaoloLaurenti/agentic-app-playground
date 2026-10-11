@@ -22,6 +22,8 @@ impl ReplySoFar {
                 self.text.push_str(text);
                 !std::mem::replace(&mut self.started, true)
             }
+            // Tool requests are left out until step 7.6 records them.
+            LlmEvent::ToolUse { .. } => false,
             LlmEvent::Stop(reason) => {
                 self.stop_reason = Some(reason.clone());
                 false

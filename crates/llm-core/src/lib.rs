@@ -229,6 +229,13 @@ pub struct LlmResponse {
 pub enum LlmEvent {
     /// A piece of the reply text.
     TextDelta(String),
+    /// A tool request, sent whole once its block has ended: its input arrives in pieces of a
+    /// JSON string, which are never passed on.
+    ToolUse {
+        id: ToolUseId,
+        name: ToolName,
+        input: serde_json::Map<String, serde_json::Value>,
+    },
     /// The model stopped generating.
     Stop(StopReason),
     /// Token usage and latency, sent once the response is complete.

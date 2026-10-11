@@ -357,6 +357,8 @@ async fn call_streaming(
                 std::io::stdout().flush()?;
                 reply.push_str(&text);
             }
+            // `hello` sends no tools, so the model cannot ask for one.
+            LlmEvent::ToolUse { .. } => {}
             LlmEvent::Stop(reason) => stop_reason = Some(reason),
             LlmEvent::Metadata { usage, latency } => metadata = Some((usage, latency)),
         }

@@ -2,9 +2,10 @@
 //! that what `BedrockClient` sends is what Bedrock accepts. They need the network and valid
 //! credentials, so they are ignored by default: `cargo nextest run -p llm-bedrock --run-ignored only`.
 
+use futures::StreamExt;
 use llm_bedrock::BedrockClient;
 use llm_core::{
-    AssistantBlock, InputSchema, LlmClient, LlmRequest, LlmResponse, Message, ModelId,
+    AssistantBlock, InputSchema, LlmClient, LlmEvent, LlmRequest, LlmResponse, Message, ModelId,
     OutputSchema, StopReason, ToolDescription, ToolName, ToolOutcome, ToolSpec, ToolUseId,
     UserBlock,
 };
@@ -179,5 +180,69 @@ async fn a_model_answers_from_the_tool_result_it_receives() {
             .any(|block| matches!(block, AssistantBlock::Text(text) if !text.trim().is_empty())),
         "{:?}",
         response.content
+    );
+}
+
+/// The events of a streamed reply, failing the test on the first error.
+async fn stream_events(client: &BedrockClient, request: LlmRequest) -> Vec<LlmEvent> {
+    client
+        .stream(request)
+        .await
+        .unwrap()
+        .map(|event| event.unwrap())
+        .collect()
+        .await
+}
+
+#[tokio::test]
+#[ignore = "talks to the real Bedrock with the AWS profile in .env"]
+async fn a_streamed_tool_request_has_input_that_follows_its_schema() {
+    let client = client_from_env().await;
+
+    let events = stream_events(&client, date_request(vec![date_question()])).await;
+
+    let input = events
+        .iter()
+        .find_map(|event| match event {
+            LlmEvent::ToolUse { name, input, .. } if name.as_str() == "get_current_date" => {
+                Some(input)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected a tool request, got {events:?}"));
+    assert!(input["time_zone"].is_string(), "{input:?}");
+    assert!(
+        events.contains(&LlmEvent::Stop(StopReason::ToolUse)),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "talks to the real Bedrock with the AWS profile in .env"]
+async fn a_streamed_tool_request_without_arguments_has_an_empty_input() {
+    let client = client_from_env().await;
+    let request = LlmRequest {
+        tools: vec![ToolSpec {
+            name: ToolName::new("get_current_date").unwrap(),
+            description: ToolDescription::new(
+                "Today's date in the clinic's time zone. Use it whenever the answer depends on the current date.",
+            )
+            .unwrap(),
+            input_schema: InputSchema::new(serde_json::json!({ "type": "object", "properties": {} }))
+                .unwrap(),
+        }],
+        ..date_request(vec![Message::User(vec![UserBlock::Text(
+            "What is the date today?".into(),
+        )])])
+    };
+
+    let events = stream_events(&client, request).await;
+
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            LlmEvent::ToolUse { input, .. } if input.is_empty()
+        )),
+        "{events:?}"
     );
 }
