@@ -217,11 +217,9 @@ async fn a_streamed_tool_request_has_input_that_follows_its_schema() {
     );
 }
 
-#[tokio::test]
-#[ignore = "talks to the real Bedrock with the AWS profile in .env"]
-async fn a_streamed_tool_request_without_arguments_has_an_empty_input() {
-    let client = client_from_env().await;
-    let request = LlmRequest {
+/// A question for a version of the date tool that takes no arguments.
+fn request_for_a_tool_without_arguments() -> LlmRequest {
+    LlmRequest {
         tools: vec![ToolSpec {
             name: ToolName::new("get_current_date").unwrap(),
             description: ToolDescription::new(
@@ -234,9 +232,29 @@ async fn a_streamed_tool_request_without_arguments_has_an_empty_input() {
         ..date_request(vec![Message::User(vec![UserBlock::Text(
             "What is the date today?".into(),
         )])])
-    };
+    }
+}
 
-    let events = stream_events(&client, request).await;
+#[tokio::test]
+#[ignore = "talks to the real Bedrock with the AWS profile in .env"]
+async fn a_tool_request_without_arguments_has_an_empty_input() {
+    let client = client_from_env().await;
+
+    let response = client
+        .complete(request_for_a_tool_without_arguments())
+        .await
+        .unwrap();
+
+    let (_, _, input) = tool_use_of(&response);
+    assert!(input.is_empty(), "{input:?}");
+}
+
+#[tokio::test]
+#[ignore = "talks to the real Bedrock with the AWS profile in .env"]
+async fn a_streamed_tool_request_without_arguments_has_an_empty_input() {
+    let client = client_from_env().await;
+
+    let events = stream_events(&client, request_for_a_tool_without_arguments()).await;
 
     assert!(
         events.iter().any(|event| matches!(
