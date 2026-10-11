@@ -117,6 +117,12 @@ safety dataset, which stay in Italian because that is what the classifier must h
   mocks, a second provider and an observability backend swap possible.
 - Typed errors with `thiserror` in libraries, `anyhow` only in binaries.
 - No `unwrap()` outside tests.
+- **Narrow typing.** Model everything with the narrowest, simplest type that fits, so that
+  impossible or inconsistent states cannot be represented. Before writing a type, a signature or
+  a field, ask whether it admits values the domain has no meaning for, and narrow it if so: an
+  enum whose variants carry their own data rather than a boolean next to a field, a newtype
+  rather than a bare `String` when values must not be mixed up, separate types for separate
+  roles. When proposing a type, say how it was narrowed, or why it cannot be narrowed further.
 
 ### Prompts
 
