@@ -201,6 +201,8 @@ pub enum StopReason {
     EndTurn,
     MaxTokens,
     StopSequence,
+    /// The model asks for one or more tools, and waits for their results.
+    ToolUse,
     /// A reason this crate does not model yet, with the provider's own name for it.
     Other(String),
 }

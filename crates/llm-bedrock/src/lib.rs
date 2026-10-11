@@ -18,7 +18,8 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use llm_core::{
     AssistantBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId,
-    OutputSchema, StopReason, SystemBlock, ToolOutcome, ToolSpec, Usage, UserBlock,
+    OutputSchema, StopReason, SystemBlock, ToolName, ToolOutcome, ToolSpec, ToolUseId, Usage,
+    UserBlock,
 };
 
 /// A Bedrock Runtime client for one region.
@@ -487,7 +488,7 @@ fn from_sdk_output(output: &ConverseOutput) -> Result<LlmResponse, LlmError> {
         .ok_or_else(|| LlmError::Other("the response contains no metrics".into()))?;
 
     Ok(LlmResponse {
-        content: from_sdk_content(message),
+        content: from_sdk_content(message)?,
         stop_reason: from_sdk_stop_reason(output.stop_reason()),
         usage: from_sdk_usage(output.usage())?,
         latency: latency(metrics.latency_ms())?,
@@ -536,17 +537,58 @@ fn latency(milliseconds: i64) -> Result<Duration, LlmError> {
 }
 
 /// The blocks of the model's reply. Its role is not read: Converse replies as the assistant.
-fn from_sdk_content(message: &sdk::Message) -> Vec<AssistantBlock> {
-    // Only text is kept for now: reasoning blocks, which Claude 5 models emit by default, and
-    // every other kind of block are skipped.
+fn from_sdk_content(message: &sdk::Message) -> Result<Vec<AssistantBlock>, LlmError> {
+    // Only text and tool requests are kept: reasoning blocks, which Claude 5 models emit by
+    // default, and every other kind of block are skipped.
     message
         .content()
         .iter()
         .filter_map(|block| match block {
-            sdk::ContentBlock::Text(text) => Some(AssistantBlock::Text(text.clone())),
+            sdk::ContentBlock::Text(text) => Some(Ok(AssistantBlock::Text(text.clone()))),
+            sdk::ContentBlock::ToolUse(tool_use) => Some(from_sdk_tool_use(tool_use)),
             _ => None,
         })
         .collect()
+}
+
+fn from_sdk_tool_use(tool_use: &sdk::ToolUseBlock) -> Result<AssistantBlock, LlmError> {
+    let name = ToolName::new(tool_use.name()).map_err(|err| LlmError::Other(err.to_string()))?;
+    let input = match from_document(tool_use.input())? {
+        serde_json::Value::Object(input) => input,
+        other => {
+            return Err(LlmError::Other(format!(
+                "the input of tool {} is not a JSON object: {other}",
+                tool_use.name()
+            )));
+        }
+    };
+    Ok(AssistantBlock::ToolUse {
+        id: ToolUseId::new(tool_use.tool_use_id()),
+        name,
+        input,
+    })
+}
+
+fn from_document(document: &Document) -> Result<serde_json::Value, LlmError> {
+    Ok(match document {
+        Document::Null => serde_json::Value::Null,
+        Document::Bool(value) => serde_json::Value::Bool(*value),
+        Document::Number(Number::PosInt(value)) => (*value).into(),
+        Document::Number(Number::NegInt(value)) => (*value).into(),
+        Document::Number(Number::Float(value)) => serde_json::Number::from_f64(*value)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| LlmError::Other(format!("{value} is not a JSON number")))?,
+        Document::String(value) => serde_json::Value::String(value.clone()),
+        Document::Array(values) => {
+            serde_json::Value::Array(values.iter().map(from_document).collect::<Result<_, _>>()?)
+        }
+        Document::Object(fields) => serde_json::Value::Object(
+            fields
+                .iter()
+                .map(|(key, value)| Ok((key.clone(), from_document(value)?)))
+                .collect::<Result<_, LlmError>>()?,
+        ),
+    })
 }
 
 fn from_sdk_stop_reason(reason: &sdk::StopReason) -> StopReason {
@@ -554,6 +596,7 @@ fn from_sdk_stop_reason(reason: &sdk::StopReason) -> StopReason {
         sdk::StopReason::EndTurn => StopReason::EndTurn,
         sdk::StopReason::MaxTokens => StopReason::MaxTokens,
         sdk::StopReason::StopSequence => StopReason::StopSequence,
+        sdk::StopReason::ToolUse => StopReason::ToolUse,
         other => StopReason::Other(other.as_str().to_owned()),
     }
 }
@@ -564,8 +607,6 @@ fn token_count(count: i32) -> Result<u32, LlmError> {
 
 #[cfg(test)]
 mod tests {
-    use llm_core::{ToolName, ToolUseId};
-
     use super::*;
 
     #[test]
@@ -717,6 +758,107 @@ mod tests {
             }
         );
         assert_eq!(response.latency, Duration::from_millis(700));
+    }
+
+    /// A reply of the model with these blocks, which stopped for this reason.
+    fn reply(blocks: Vec<sdk::ContentBlock>, stop_reason: sdk::StopReason) -> ConverseOutput {
+        let message = sdk::Message::builder()
+            .role(sdk::ConversationRole::Assistant)
+            .set_content(Some(blocks))
+            .build()
+            .unwrap();
+        ConverseOutput::builder()
+            .output(sdk::ConverseOutput::Message(message))
+            .stop_reason(stop_reason)
+            .usage(
+                sdk::TokenUsage::builder()
+                    .input_tokens(400)
+                    .output_tokens(60)
+                    .total_tokens(460)
+                    .build()
+                    .unwrap(),
+            )
+            .metrics(
+                sdk::ConverseMetrics::builder()
+                    .latency_ms(900)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap()
+    }
+
+    fn sdk_tool_use(input: Document) -> sdk::ContentBlock {
+        sdk::ContentBlock::ToolUse(
+            sdk::ToolUseBlock::builder()
+                .tool_use_id("tooluse_kZJMlvQmRJ6eAyJE5GIl7Q")
+                .name("get_current_date")
+                .input(input)
+                .build()
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_tool_use_in_the_reply_becomes_a_tool_request() {
+        let input = Document::Object(HashMap::from([
+            (
+                "time_zone".to_owned(),
+                Document::String("Europe/Rome".into()),
+            ),
+            ("days_ahead".to_owned(), Document::Number(Number::PosInt(1))),
+            (
+                "options".to_owned(),
+                Document::Object(HashMap::from([(
+                    "weekday".to_owned(),
+                    Document::Bool(true),
+                )])),
+            ),
+        ]));
+        let output = reply(
+            vec![
+                sdk::ContentBlock::Text("Let me check the date.".into()),
+                sdk_tool_use(input),
+            ],
+            sdk::StopReason::ToolUse,
+        );
+
+        let response = from_sdk_output(&output).unwrap();
+
+        let expected_input = serde_json::json!({
+            "time_zone": "Europe/Rome",
+            "days_ahead": 1,
+            "options": { "weekday": true },
+        });
+        assert_eq!(
+            response.content,
+            [
+                AssistantBlock::Text("Let me check the date.".into()),
+                AssistantBlock::ToolUse {
+                    id: ToolUseId::new("tooluse_kZJMlvQmRJ6eAyJE5GIl7Q"),
+                    name: ToolName::new("get_current_date").unwrap(),
+                    input: expected_input.as_object().unwrap().clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tool_use_whose_input_is_not_an_object_is_an_error() {
+        for input in [
+            Document::Array(vec![Document::String("Europe/Rome".into())]),
+            Document::String("Europe/Rome".into()),
+        ] {
+            let output = reply(vec![sdk_tool_use(input)], sdk::StopReason::ToolUse);
+
+            let result = from_sdk_output(&output);
+
+            assert!(
+                matches!(result, Err(LlmError::Other(_))),
+                "{:?}",
+                result.map(|response| response.content)
+            );
+        }
     }
 
     #[test]
@@ -1125,8 +1267,16 @@ mod tests {
     #[test]
     fn a_stop_reason_without_a_neutral_equivalent_keeps_its_name() {
         assert_eq!(
+            from_sdk_stop_reason(&sdk::StopReason::ContentFiltered),
+            StopReason::Other("content_filtered".into())
+        );
+    }
+
+    #[test]
+    fn the_tool_use_stop_reason_has_its_own_variant() {
+        assert_eq!(
             from_sdk_stop_reason(&sdk::StopReason::ToolUse),
-            StopReason::Other("tool_use".into())
+            StopReason::ToolUse
         );
     }
 }
