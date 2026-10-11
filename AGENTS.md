@@ -61,6 +61,7 @@ crates/llm-core       neutral types and the LlmClient trait, with no provider SD
 crates/llm-bedrock    the Converse implementation of LlmClient
 crates/observability  Langfuse: tracing, scores, the prompt registry; LlmClientBuilder, decorators
 crates/prompts        the prompts compiled into the binary, and their rendering
+crates/harness        the tools a model can ask for, and the loop that runs them
 prompts/              one TOML file per prompt, with the version Langfuse gave it
 datasets/             test cases in JSONL, one folder per step, synthetic only
 justfile              the check, test, run, prompts-push and langfuse recipes
