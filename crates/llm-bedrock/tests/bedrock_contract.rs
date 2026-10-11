@@ -29,6 +29,7 @@ async fn effort_sent_to_a_model_that_rejects_it_does_not_fail_the_call() {
         max_tokens: 50,
         extra: serde_json::json!({ "output_config": { "effort": "low" } }),
         prompt: None,
+        tools: vec![],
         output_schema: None,
     };
 
@@ -50,6 +51,7 @@ async fn a_model_with_an_output_schema_replies_with_json_that_follows_it() {
         max_tokens: 100,
         extra: serde_json::Value::Null,
         prompt: None,
+        tools: vec![],
         output_schema: Some(OutputSchema {
             name: "Answer".into(),
             schema: serde_json::json!({
@@ -63,7 +65,9 @@ async fn a_model_with_an_output_schema_replies_with_json_that_follows_it() {
 
     let response = client.complete(request).await.unwrap();
 
-    let AssistantBlock::Text(text) = &response.content[0];
+    let AssistantBlock::Text(text) = &response.content[0] else {
+        panic!("expected text, got {:?}", response.content);
+    };
     let reply: serde_json::Value = serde_json::from_str(text).unwrap();
     assert!(
         matches!(reply["answer"].as_str(), Some("yes" | "no")),

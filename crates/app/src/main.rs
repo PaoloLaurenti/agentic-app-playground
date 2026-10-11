@@ -230,12 +230,13 @@ fn system_prompt(path: Option<&Path>) -> Result<Vec<SystemBlock>> {
     Ok(vec![SystemBlock::Text(text), SystemBlock::CachePoint])
 }
 
-/// The text of the model's reply.
+/// The text of the model's reply, without its tool requests.
 fn text_of(content: &[AssistantBlock]) -> String {
     content
         .iter()
-        .map(|block| match block {
-            AssistantBlock::Text(text) => text.as_str(),
+        .filter_map(|block| match block {
+            AssistantBlock::Text(text) => Some(text.as_str()),
+            AssistantBlock::ToolUse { .. } => None,
         })
         .collect()
 }
@@ -252,6 +253,7 @@ async fn hello(args: HelloArgs, scores: Option<Arc<dyn Scores>>) -> Result<()> {
         max_tokens: args.max_tokens,
         extra: serde_json::Value::Null,
         prompt: None,
+        tools: vec![],
         output_schema: None,
     };
 

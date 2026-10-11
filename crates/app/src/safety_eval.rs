@@ -272,6 +272,7 @@ impl Classifier {
             max_tokens: self.max_tokens,
             extra: Value::Null,
             prompt: Some(rendered.prompt),
+            tools: vec![],
             output_schema: Some(SafetyVerdict::output_schema()),
         };
         let response = client
@@ -557,6 +558,7 @@ mod tests {
                     name: "safety-classifier".into(),
                     version: 4,
                 }),
+                tools: vec![],
                 output_schema: Some(SafetyVerdict::output_schema()),
             }
         );

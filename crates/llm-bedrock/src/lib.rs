@@ -18,7 +18,7 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use llm_core::{
     AssistantBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId,
-    OutputSchema, StopReason, SystemBlock, Usage, UserBlock,
+    OutputSchema, StopReason, SystemBlock, ToolOutcome, ToolSpec, Usage, UserBlock,
 };
 
 /// A Bedrock Runtime client for one region.
@@ -146,6 +146,7 @@ impl BedrockClient {
             .inference_config(request.inference_config)
             .set_additional_model_request_fields(request.additional_fields)
             .set_output_config(request.output_config)
+            .set_tool_config(request.tool_config)
             .send()
             .await
             .map_err(|err| from_sdk_error(err, from_converse_error))?;
@@ -163,6 +164,7 @@ impl BedrockClient {
             .inference_config(request.inference_config)
             .set_additional_model_request_fields(request.additional_fields)
             .set_output_config(request.output_config)
+            .set_tool_config(request.tool_config)
             .send()
             .await
             .map_err(|err| from_sdk_error(err, from_converse_stream_error))?;
@@ -196,6 +198,8 @@ struct SdkRequest {
     additional_fields: Option<Document>,
     /// The JSON Schema the reply must follow, when the caller asked for structured output.
     output_config: Option<sdk::OutputConfig>,
+    /// The tools the model may ask for.
+    tool_config: Option<sdk::ToolConfiguration>,
 }
 
 impl TryFrom<&LlmRequest> for SdkRequest {
@@ -227,8 +231,33 @@ impl TryFrom<&LlmRequest> for SdkRequest {
                 .build(),
             additional_fields,
             output_config,
+            // Converse rejects a tool configuration with no tools in it.
+            tool_config: (!req.tools.is_empty())
+                .then(|| to_sdk_tools(&req.tools))
+                .transpose()?,
         })
     }
+}
+
+fn to_sdk_tools(tools: &[ToolSpec]) -> Result<sdk::ToolConfiguration, LlmError> {
+    let tools = tools
+        .iter()
+        .map(|tool| {
+            sdk::ToolSpecification::builder()
+                .name(tool.name.as_str())
+                .description(tool.description.as_str())
+                .input_schema(sdk::ToolInputSchema::Json(object_document(
+                    tool.input_schema.as_object(),
+                )))
+                .build()
+                .map(sdk::Tool::ToolSpec)
+                .map_err(invalid)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    sdk::ToolConfiguration::builder()
+        .set_tools(Some(tools))
+        .build()
+        .map_err(invalid)
 }
 
 /// Structured output through Converse's own field, `outputConfig.textFormat`, which takes the
@@ -263,13 +292,17 @@ fn to_document(value: &serde_json::Value) -> Document {
         serde_json::Value::Array(values) => {
             Document::Array(values.iter().map(to_document).collect())
         }
-        serde_json::Value::Object(fields) => Document::Object(
-            fields
-                .iter()
-                .map(|(key, value)| (key.clone(), to_document(value)))
-                .collect::<HashMap<_, _>>(),
-        ),
+        serde_json::Value::Object(fields) => object_document(fields),
     }
+}
+
+fn object_document(fields: &serde_json::Map<String, serde_json::Value>) -> Document {
+    Document::Object(
+        fields
+            .iter()
+            .map(|(key, value)| (key.clone(), to_document(value)))
+            .collect::<HashMap<_, _>>(),
+    )
 }
 
 /// A request the SDK refuses to build is a bug in the request, not something to retry.
@@ -396,7 +429,10 @@ fn to_sdk_message(message: &Message) -> Result<sdk::Message, LlmError> {
         ),
         Message::Assistant(blocks) => (
             sdk::ConversationRole::Assistant,
-            blocks.iter().map(to_sdk_assistant_block).collect(),
+            blocks
+                .iter()
+                .map(to_sdk_assistant_block)
+                .collect::<Result<Vec<_>, _>>()?,
         ),
     };
     sdk::Message::builder()
@@ -410,12 +446,35 @@ fn to_sdk_user_block(block: &UserBlock) -> Result<sdk::ContentBlock, LlmError> {
     match block {
         UserBlock::Text(text) => Ok(sdk::ContentBlock::Text(text.clone())),
         UserBlock::CachePoint => cache_point().map(sdk::ContentBlock::CachePoint),
+        UserBlock::ToolResult {
+            tool_use_id,
+            outcome,
+        } => {
+            let (status, text) = match outcome {
+                ToolOutcome::Success(text) => (sdk::ToolResultStatus::Success, text),
+                ToolOutcome::Failure(text) => (sdk::ToolResultStatus::Error, text),
+            };
+            sdk::ToolResultBlock::builder()
+                .tool_use_id(tool_use_id.as_str())
+                .content(sdk::ToolResultContentBlock::Text(text.clone()))
+                .status(status)
+                .build()
+                .map(sdk::ContentBlock::ToolResult)
+                .map_err(invalid)
+        }
     }
 }
 
-fn to_sdk_assistant_block(block: &AssistantBlock) -> sdk::ContentBlock {
+fn to_sdk_assistant_block(block: &AssistantBlock) -> Result<sdk::ContentBlock, LlmError> {
     match block {
-        AssistantBlock::Text(text) => sdk::ContentBlock::Text(text.clone()),
+        AssistantBlock::Text(text) => Ok(sdk::ContentBlock::Text(text.clone())),
+        AssistantBlock::ToolUse { id, name, input } => sdk::ToolUseBlock::builder()
+            .tool_use_id(id.as_str())
+            .name(name.as_str())
+            .input(object_document(input))
+            .build()
+            .map(sdk::ContentBlock::ToolUse)
+            .map_err(invalid),
     }
 }
 
@@ -505,6 +564,8 @@ fn token_count(count: i32) -> Result<u32, LlmError> {
 
 #[cfg(test)]
 mod tests {
+    use llm_core::{ToolName, ToolUseId};
+
     use super::*;
 
     #[test]
@@ -524,6 +585,72 @@ mod tests {
             &sdk_message.content()[1],
             sdk::ContentBlock::CachePoint(_)
         ));
+    }
+
+    #[test]
+    fn a_tool_request_keeps_its_id_name_and_input_in_the_sdk() {
+        let input = serde_json::json!({ "time_zone": "Europe/Rome" });
+        let message = Message::Assistant(vec![AssistantBlock::ToolUse {
+            id: ToolUseId::new("tooluse_kZJMlvQmRJ6eAyJE5GIl7Q"),
+            name: ToolName::new("get_current_date").unwrap(),
+            input: input.as_object().unwrap().clone(),
+        }]);
+
+        let sdk_message = to_sdk_message(&message).unwrap();
+
+        assert_eq!(sdk_message.role(), &sdk::ConversationRole::Assistant);
+        let [sdk::ContentBlock::ToolUse(tool_use)] = sdk_message.content() else {
+            panic!("expected one tool use, got {:?}", sdk_message.content());
+        };
+        assert_eq!(tool_use.tool_use_id(), "tooluse_kZJMlvQmRJ6eAyJE5GIl7Q");
+        assert_eq!(tool_use.name(), "get_current_date");
+        assert_eq!(
+            tool_use.input(),
+            &Document::Object(HashMap::from([(
+                "time_zone".to_owned(),
+                Document::String("Europe/Rome".into()),
+            )]))
+        );
+    }
+
+    fn sdk_tool_result(outcome: ToolOutcome) -> sdk::ToolResultBlock {
+        let message = Message::User(vec![UserBlock::ToolResult {
+            tool_use_id: ToolUseId::new("tooluse_kZJMlvQmRJ6eAyJE5GIl7Q"),
+            outcome,
+        }]);
+        let sdk_message = to_sdk_message(&message).unwrap();
+        let [sdk::ContentBlock::ToolResult(result)] = sdk_message.content() else {
+            panic!("expected one tool result, got {:?}", sdk_message.content());
+        };
+        result.clone()
+    }
+
+    #[test]
+    fn a_successful_tool_result_is_sent_with_the_success_status() {
+        let result = sdk_tool_result(ToolOutcome::Success("2026-10-12".into()));
+
+        assert_eq!(result.tool_use_id(), "tooluse_kZJMlvQmRJ6eAyJE5GIl7Q");
+        assert_eq!(
+            result.content(),
+            [sdk::ToolResultContentBlock::Text("2026-10-12".into())]
+        );
+        assert_eq!(result.status(), Some(&sdk::ToolResultStatus::Success));
+    }
+
+    #[test]
+    fn a_failed_tool_result_is_sent_with_the_error_status() {
+        let result = sdk_tool_result(ToolOutcome::Failure(
+            "invalid input: missing field `time_zone`".into(),
+        ));
+
+        assert_eq!(result.tool_use_id(), "tooluse_kZJMlvQmRJ6eAyJE5GIl7Q");
+        assert_eq!(
+            result.content(),
+            [sdk::ToolResultContentBlock::Text(
+                "invalid input: missing field `time_zone`".into()
+            )]
+        );
+        assert_eq!(result.status(), Some(&sdk::ToolResultStatus::Error));
     }
 
     #[test]
@@ -774,6 +901,7 @@ mod tests {
             max_tokens: 50,
             extra,
             prompt: None,
+            tools: vec![],
             output_schema: None,
         }
     }
@@ -936,6 +1064,62 @@ mod tests {
         let request = SdkRequest::try_from(&request_with_extra(serde_json::Value::Null)).unwrap();
 
         assert!(request.output_config.is_none());
+    }
+
+    #[test]
+    fn without_tools_no_tool_configuration_is_sent() {
+        let request = SdkRequest::try_from(&request_with_extra(serde_json::Value::Null)).unwrap();
+
+        // Converse rejects a tool configuration with no tools in it.
+        assert!(request.tool_config.is_none());
+    }
+
+    #[test]
+    fn a_tool_becomes_a_tool_specification_with_its_schema_as_a_document() {
+        let request = LlmRequest {
+            tools: vec![llm_core::ToolSpec {
+                name: llm_core::ToolName::new("get_current_date").unwrap(),
+                description: llm_core::ToolDescription::new(
+                    "Today's date in the clinic's time zone.",
+                )
+                .unwrap(),
+                input_schema: llm_core::InputSchema::new(serde_json::json!({
+                    "type": "object",
+                    "properties": { "time_zone": { "type": "string" } },
+                }))
+                .unwrap(),
+            }],
+            ..request_with_extra(serde_json::Value::Null)
+        };
+
+        let request = SdkRequest::try_from(&request).unwrap();
+
+        let tools = request.tool_config.expect("a tool configuration").tools;
+        let [sdk::Tool::ToolSpec(spec)] = tools.as_slice() else {
+            panic!("expected one tool specification, got {tools:?}");
+        };
+        assert_eq!(spec.name(), "get_current_date");
+        assert_eq!(
+            spec.description(),
+            Some("Today's date in the clinic's time zone.")
+        );
+        let expected = Document::Object(HashMap::from([
+            ("type".to_owned(), Document::String("object".into())),
+            (
+                "properties".to_owned(),
+                Document::Object(HashMap::from([(
+                    "time_zone".to_owned(),
+                    Document::Object(HashMap::from([(
+                        "type".to_owned(),
+                        Document::String("string".into()),
+                    )])),
+                )])),
+            ),
+        ]));
+        assert_eq!(
+            spec.input_schema(),
+            Some(&sdk::ToolInputSchema::Json(expected))
+        );
     }
 
     #[test]

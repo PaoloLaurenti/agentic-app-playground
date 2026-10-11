@@ -27,12 +27,15 @@ async fn the_safety_classifier_replies_with_a_verdict_that_follows_its_schema() 
         max_tokens: 200,
         extra: serde_json::Value::Null,
         prompt: Some(rendered.prompt),
+        tools: vec![],
         output_schema: Some(SafetyVerdict::output_schema()),
     };
 
     let response = client.complete(request).await.unwrap();
 
-    let AssistantBlock::Text(text) = &response.content[0];
+    let AssistantBlock::Text(text) = &response.content[0] else {
+        panic!("expected text, got {:?}", response.content);
+    };
     let verdict: Result<SafetyVerdict, _> = serde_json::from_str(text);
     assert!(verdict.is_ok(), "{text}");
 }

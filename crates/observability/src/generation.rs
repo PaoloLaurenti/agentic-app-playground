@@ -102,7 +102,8 @@ fn user_message(blocks: &[UserBlock]) -> Value {
         .iter()
         .filter_map(|block| match block {
             UserBlock::Text(text) => Some(text.as_str()),
-            UserBlock::CachePoint => None,
+            // Tool blocks are left out until step 7.6 records them.
+            UserBlock::CachePoint | UserBlock::ToolResult { .. } => None,
         })
         .collect();
     json!({ "role": "user", "content": content })
@@ -111,8 +112,9 @@ fn user_message(blocks: &[UserBlock]) -> Value {
 fn assistant_message(blocks: &[AssistantBlock]) -> Value {
     let content: String = blocks
         .iter()
-        .map(|block| match block {
-            AssistantBlock::Text(text) => text.as_str(),
+        .filter_map(|block| match block {
+            AssistantBlock::Text(text) => Some(text.as_str()),
+            AssistantBlock::ToolUse { .. } => None,
         })
         .collect();
     json!({ "role": "assistant", "content": content })
@@ -160,6 +162,7 @@ mod tests {
             max_tokens: 50,
             extra: json!({ "effort": "low" }),
             prompt: None,
+            tools: vec![],
             output_schema: None,
         }
     }
