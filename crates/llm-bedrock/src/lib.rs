@@ -17,8 +17,8 @@ use aws_smithy_types::{Document, Number};
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use llm_core::{
-    ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId,
-    OutputSchema, Role, StopReason, SystemBlock, Usage,
+    AssistantBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId,
+    OutputSchema, StopReason, SystemBlock, Usage, UserBlock,
 };
 
 /// A Bedrock Runtime client for one region.
@@ -386,23 +386,37 @@ fn to_sdk_system(blocks: &[SystemBlock]) -> Result<Vec<sdk::SystemContentBlock>,
 }
 
 fn to_sdk_message(message: &Message) -> Result<sdk::Message, LlmError> {
-    let role = match message.role {
-        Role::User => sdk::ConversationRole::User,
-        Role::Assistant => sdk::ConversationRole::Assistant,
+    let (role, content) = match message {
+        Message::User(blocks) => (
+            sdk::ConversationRole::User,
+            blocks
+                .iter()
+                .map(to_sdk_user_block)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Message::Assistant(blocks) => (
+            sdk::ConversationRole::Assistant,
+            blocks.iter().map(to_sdk_assistant_block).collect(),
+        ),
     };
-    let content = message
-        .content
-        .iter()
-        .map(|block| match block {
-            ContentBlock::Text(text) => Ok(sdk::ContentBlock::Text(text.clone())),
-            ContentBlock::CachePoint => cache_point().map(sdk::ContentBlock::CachePoint),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     sdk::Message::builder()
         .role(role)
         .set_content(Some(content))
         .build()
         .map_err(invalid)
+}
+
+fn to_sdk_user_block(block: &UserBlock) -> Result<sdk::ContentBlock, LlmError> {
+    match block {
+        UserBlock::Text(text) => Ok(sdk::ContentBlock::Text(text.clone())),
+        UserBlock::CachePoint => cache_point().map(sdk::ContentBlock::CachePoint),
+    }
+}
+
+fn to_sdk_assistant_block(block: &AssistantBlock) -> sdk::ContentBlock {
+    match block {
+        AssistantBlock::Text(text) => sdk::ContentBlock::Text(text.clone()),
+    }
 }
 
 fn from_sdk_output(output: &ConverseOutput) -> Result<LlmResponse, LlmError> {
@@ -414,7 +428,7 @@ fn from_sdk_output(output: &ConverseOutput) -> Result<LlmResponse, LlmError> {
         .ok_or_else(|| LlmError::Other("the response contains no metrics".into()))?;
 
     Ok(LlmResponse {
-        message: from_sdk_message(message)?,
+        content: from_sdk_content(message),
         stop_reason: from_sdk_stop_reason(output.stop_reason()),
         usage: from_sdk_usage(output.usage())?,
         latency: latency(metrics.latency_ms())?,
@@ -462,28 +476,18 @@ fn latency(milliseconds: i64) -> Result<Duration, LlmError> {
         .map_err(|_| LlmError::Other(format!("negative latency {milliseconds}")))
 }
 
-fn from_sdk_message(message: &sdk::Message) -> Result<Message, LlmError> {
-    let role = match message.role() {
-        sdk::ConversationRole::User => Role::User,
-        sdk::ConversationRole::Assistant => Role::Assistant,
-        other => {
-            return Err(LlmError::Other(format!(
-                "unexpected role {}",
-                other.as_str()
-            )));
-        }
-    };
+/// The blocks of the model's reply. Its role is not read: Converse replies as the assistant.
+fn from_sdk_content(message: &sdk::Message) -> Vec<AssistantBlock> {
     // Only text is kept for now: reasoning blocks, which Claude 5 models emit by default, and
     // every other kind of block are skipped.
-    let content = message
+    message
         .content()
         .iter()
         .filter_map(|block| match block {
-            sdk::ContentBlock::Text(text) => Some(ContentBlock::Text(text.clone())),
+            sdk::ContentBlock::Text(text) => Some(AssistantBlock::Text(text.clone())),
             _ => None,
         })
-        .collect();
-    Ok(Message { role, content })
+        .collect()
 }
 
 fn from_sdk_stop_reason(reason: &sdk::StopReason) -> StopReason {
@@ -505,13 +509,10 @@ mod tests {
 
     #[test]
     fn a_message_keeps_its_role_and_blocks_in_the_sdk() {
-        let message = Message {
-            role: Role::User,
-            content: vec![
-                ContentBlock::Text("ready?".into()),
-                ContentBlock::CachePoint,
-            ],
-        };
+        let message = Message::User(vec![
+            UserBlock::Text("ready?".into()),
+            UserBlock::CachePoint,
+        ]);
 
         let sdk_message = to_sdk_message(&message).unwrap();
 
@@ -577,13 +578,7 @@ mod tests {
 
         let response = from_sdk_output(&output).unwrap();
 
-        assert_eq!(
-            response.message,
-            Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text("Ready.".into())],
-            }
-        );
+        assert_eq!(response.content, [AssistantBlock::Text("Ready.".into())]);
         assert_eq!(response.stop_reason, StopReason::EndTurn);
         assert_eq!(
             response.usage,
@@ -775,10 +770,7 @@ mod tests {
         LlmRequest {
             model: llm_core::ModelId::new("test-model"),
             system: vec![],
-            messages: vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("ready?".into())],
-            }],
+            messages: vec![Message::User(vec![UserBlock::Text("ready?".into())])],
             max_tokens: 50,
             extra,
             prompt: None,

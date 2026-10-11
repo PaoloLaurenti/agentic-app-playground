@@ -19,12 +19,6 @@ impl ModelId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    User,
-    Assistant,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SystemBlock {
     Text(String),
@@ -32,17 +26,27 @@ pub enum SystemBlock {
     CachePoint,
 }
 
+/// A turn of the conversation. Each role has its own kind of block, so that a block can only
+/// appear in a turn that may carry it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContentBlock {
+pub enum Message {
+    User(Vec<UserBlock>),
+    Assistant(Vec<AssistantBlock>),
+}
+
+/// What the user's turn may carry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserBlock {
     Text(String),
-    /// Marks the end of the stable prefix that the provider may cache.
+    /// Marks the end of the stable prefix that the provider may cache. Only the user's turns carry
+    /// it: the prefix ends with the last message sent, which is always the user's.
     CachePoint,
 }
 
+/// What the model's turn may carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Message {
-    pub role: Role,
-    pub content: Vec<ContentBlock>,
+pub enum AssistantBlock {
+    Text(String),
 }
 
 /// The prompt a request was built from, so that the call can be linked to that prompt's version.
@@ -93,7 +97,8 @@ pub struct Usage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmResponse {
-    pub message: Message,
+    /// The model's turn. A reply is always the assistant's, so it carries no role.
+    pub content: Vec<AssistantBlock>,
     pub stop_reason: StopReason,
     pub usage: Usage,
     pub latency: Duration,
@@ -173,10 +178,7 @@ mod tests {
 
         async fn complete(&self, _req: LlmRequest) -> Result<LlmResponse, LlmError> {
             Ok(LlmResponse {
-                message: Message {
-                    role: Role::Assistant,
-                    content: vec![ContentBlock::Text("Ready.".into())],
-                },
+                content: vec![AssistantBlock::Text("Ready.".into())],
                 stop_reason: StopReason::EndTurn,
                 usage: Usage {
                     input_tokens: 15,
@@ -205,12 +207,9 @@ mod tests {
         let request = LlmRequest {
             model: ModelId::new("test-model"),
             system: vec![],
-            messages: vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text(
-                    "Answer with a single word: ready?".into(),
-                )],
-            }],
+            messages: vec![Message::User(vec![UserBlock::Text(
+                "Answer with a single word: ready?".into(),
+            )])],
             max_tokens: 50,
             extra: serde_json::Value::Null,
             prompt: None,

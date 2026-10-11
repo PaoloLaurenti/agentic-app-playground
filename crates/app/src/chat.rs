@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::Args;
-use llm_core::{ContentBlock, LlmClient, LlmRequest, LlmResponse, Message, ModelId, Role};
+use llm_core::{LlmClient, LlmRequest, LlmResponse, Message, ModelId, UserBlock};
 use std::sync::Arc;
 
 use observability::Scores;
@@ -68,10 +68,7 @@ pub async fn chat(args: ChatArgs, scores: Option<Arc<dyn Scores>>) -> Result<()>
             println!("you › {text}");
         }
         turn_number += 1;
-        messages.push(Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text(text.to_owned())],
-        });
+        messages.push(Message::User(vec![UserBlock::Text(text.to_owned())]));
         let request = LlmRequest {
             model: ModelId::new(&model),
             system: system.clone(),
@@ -87,14 +84,14 @@ pub async fn chat(args: ChatArgs, scores: Option<Arc<dyn Scores>>) -> Result<()>
         total_cost += cost.unwrap_or_default();
         println!(
             "{}",
-            output::labelled("bot › ", &text_of(&response.message))
+            output::labelled("bot › ", &text_of(&response.content))
         );
         let usage = output::usage_line(&response.usage, cost);
         println!(
             "      {}\n",
             output::dimmed(&usage, output::color_enabled())
         );
-        messages.push(response.message);
+        messages.push(Message::Assistant(response.content));
     }
 
     match price {
@@ -125,6 +122,6 @@ async fn turn(
     user_id: &str,
 ) -> Result<LlmResponse> {
     let response = client.complete(request).await?;
-    tracing::Span::current().record("output.value", text_of(&response.message).as_str());
+    tracing::Span::current().record("output.value", text_of(&response.content).as_str());
     Ok(response)
 }

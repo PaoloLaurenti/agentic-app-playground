@@ -59,7 +59,7 @@ mod tests {
     use std::time::Duration;
 
     use futures::StreamExt;
-    use llm_core::{ContentBlock, LlmRequest, LlmResponse};
+    use llm_core::{AssistantBlock, LlmRequest, LlmResponse};
 
     use super::*;
     use crate::Verdict;
@@ -267,7 +267,7 @@ mod tests {
     fn reply_is_ready(_req: &LlmRequest, resp: &LlmResponse) -> Verdict {
         Verdict {
             name: "reply_is_ready",
-            value: resp.message.content == [ContentBlock::Text("Ready.".into())],
+            value: resp.content == [AssistantBlock::Text("Ready.".into())],
         }
     }
 

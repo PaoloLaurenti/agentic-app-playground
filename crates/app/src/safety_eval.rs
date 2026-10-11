@@ -278,7 +278,7 @@ impl Classifier {
             .complete(request)
             .await
             .with_context(|| format!("classifying {}", case.id))?;
-        let reply = text_of(&response.message);
+        let reply = text_of(&response.content);
         let predicted = match response.stop_reason {
             StopReason::EndTurn => serde_json::from_str::<SafetyVerdict>(&reply)
                 .map(|verdict| verdict.label)
@@ -392,8 +392,7 @@ mod tests {
 
     use futures::stream::BoxStream;
     use llm_core::{
-        ContentBlock, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, PromptRef, Role,
-        StopReason, Usage,
+        AssistantBlock, LlmError, LlmEvent, LlmRequest, LlmResponse, PromptRef, StopReason, Usage,
     };
     use prompts::{SafetyVerdict, safety_classifier};
 
@@ -497,10 +496,7 @@ mod tests {
         async fn complete(&self, req: LlmRequest) -> Result<LlmResponse, LlmError> {
             *self.received.lock().unwrap() = Some(req);
             Ok(LlmResponse {
-                message: Message {
-                    role: Role::Assistant,
-                    content: vec![ContentBlock::Text(self.reply.into())],
-                },
+                content: vec![AssistantBlock::Text(self.reply.into())],
                 stop_reason: self.stop_reason.clone(),
                 usage: Usage {
                     input_tokens: 600,

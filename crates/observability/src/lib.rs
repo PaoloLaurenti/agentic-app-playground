@@ -192,8 +192,8 @@ mod test_support {
     use futures::StreamExt;
     use futures::stream::BoxStream;
     use llm_core::{
-        ContentBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId,
-        Role, StopReason, Usage,
+        AssistantBlock, LlmClient, LlmError, LlmEvent, LlmRequest, LlmResponse, Message, ModelId,
+        StopReason, Usage, UserBlock,
     };
 
     use opentelemetry::trace::TracerProvider as _;
@@ -264,10 +264,7 @@ mod test_support {
         LlmRequest {
             model: ModelId::new("test-model"),
             system: vec![],
-            messages: vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("Ready?".into())],
-            }],
+            messages: vec![Message::User(vec![UserBlock::Text("Ready?".into())])],
             max_tokens: 50,
             extra: serde_json::Value::Null,
             prompt: None,
@@ -277,10 +274,7 @@ mod test_support {
 
     pub fn reply() -> LlmResponse {
         LlmResponse {
-            message: Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text("Ready.".into())],
-            },
+            content: vec![AssistantBlock::Text("Ready.".into())],
             stop_reason: StopReason::EndTurn,
             usage: Usage {
                 input_tokens: 15,

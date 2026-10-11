@@ -4,7 +4,7 @@
 //! `cargo nextest run -p prompts --run-ignored only`.
 
 use llm_bedrock::BedrockClient;
-use llm_core::{ContentBlock, LlmClient, LlmRequest, ModelId};
+use llm_core::{AssistantBlock, LlmClient, LlmRequest, ModelId};
 use prompts::{SafetyVerdict, safety_classifier};
 
 #[tokio::test]
@@ -32,9 +32,7 @@ async fn the_safety_classifier_replies_with_a_verdict_that_follows_its_schema() 
 
     let response = client.complete(request).await.unwrap();
 
-    let ContentBlock::Text(text) = &response.message.content[0] else {
-        panic!("expected text, got {:?}", response.message.content);
-    };
+    let AssistantBlock::Text(text) = &response.content[0];
     let verdict: Result<SafetyVerdict, _> = serde_json::from_str(text);
     assert!(verdict.is_ok(), "{text}");
 }

@@ -4,7 +4,7 @@
 use std::time::SystemTime;
 
 use llm_core::{
-    ContentBlock, LlmError, LlmRequest, LlmResponse, Message, Role, SystemBlock, Usage,
+    AssistantBlock, LlmError, LlmRequest, LlmResponse, Message, SystemBlock, Usage, UserBlock,
 };
 use serde_json::{Value, json};
 use tracing::Span;
@@ -15,7 +15,7 @@ pub(crate) fn record_generation(span: &Span, req: &LlmRequest, resp: &LlmRespons
     record_request(span, req);
     span.set_attribute(
         "langfuse.observation.output",
-        message(&resp.message).to_string(),
+        assistant_message(&resp.content).to_string(),
     );
     span.set_attribute(
         "langfuse.observation.usage_details",
@@ -91,19 +91,31 @@ fn input(req: &LlmRequest) -> Value {
 }
 
 fn message(message: &Message) -> Value {
-    let role = match message.role {
-        Role::User => "user",
-        Role::Assistant => "assistant",
-    };
-    let content: String = message
-        .content
+    match message {
+        Message::User(blocks) => user_message(blocks),
+        Message::Assistant(blocks) => assistant_message(blocks),
+    }
+}
+
+fn user_message(blocks: &[UserBlock]) -> Value {
+    let content: String = blocks
         .iter()
         .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text.as_str()),
-            ContentBlock::CachePoint => None,
+            UserBlock::Text(text) => Some(text.as_str()),
+            UserBlock::CachePoint => None,
         })
         .collect();
-    json!({ "role": role, "content": content })
+    json!({ "role": "user", "content": content })
+}
+
+fn assistant_message(blocks: &[AssistantBlock]) -> Value {
+    let content: String = blocks
+        .iter()
+        .map(|block| match block {
+            AssistantBlock::Text(text) => text.as_str(),
+        })
+        .collect();
+    json!({ "role": "assistant", "content": content })
 }
 
 /// `max_tokens`, plus the model-specific fields such as effort.
@@ -144,10 +156,7 @@ mod tests {
                 SystemBlock::Text("You are terse.".into()),
                 SystemBlock::CachePoint,
             ],
-            messages: vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("Ready?".into())],
-            }],
+            messages: vec![Message::User(vec![UserBlock::Text("Ready?".into())])],
             max_tokens: 50,
             extra: json!({ "effort": "low" }),
             prompt: None,
@@ -157,10 +166,7 @@ mod tests {
 
     fn response() -> LlmResponse {
         LlmResponse {
-            message: Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text("Ready.".into())],
-            },
+            content: vec![AssistantBlock::Text("Ready.".into())],
             stop_reason: StopReason::EndTurn,
             usage: Usage {
                 input_tokens: 15,

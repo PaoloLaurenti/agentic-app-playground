@@ -17,8 +17,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures::StreamExt;
 use llm_bedrock::BedrockClient;
 use llm_core::{
-    ContentBlock, LlmClient, LlmEvent, LlmRequest, Message, ModelId, Role, StopReason, SystemBlock,
-    Usage,
+    AssistantBlock, LlmClient, LlmEvent, LlmRequest, Message, ModelId, StopReason, SystemBlock,
+    Usage, UserBlock,
 };
 use observability::{
     Config, Evaluator, LangfuseConfig, LlmClientBuilder, ScoreClient, Scores, Telemetry,
@@ -230,14 +230,12 @@ fn system_prompt(path: Option<&Path>) -> Result<Vec<SystemBlock>> {
     Ok(vec![SystemBlock::Text(text), SystemBlock::CachePoint])
 }
 
-/// The text of a message, without its cache points.
-fn text_of(message: &Message) -> String {
-    message
-        .content
+/// The text of the model's reply.
+fn text_of(content: &[AssistantBlock]) -> String {
+    content
         .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text(text) => Some(text.as_str()),
-            ContentBlock::CachePoint => None,
+        .map(|block| match block {
+            AssistantBlock::Text(text) => text.as_str(),
         })
         .collect()
 }
@@ -250,10 +248,7 @@ async fn hello(args: HelloArgs, scores: Option<Arc<dyn Scores>>) -> Result<()> {
     let request = LlmRequest {
         model: ModelId::new(&model),
         system,
-        messages: vec![Message {
-            role: Role::User,
-            content: vec![ContentBlock::Text(args.message.clone())],
-        }],
+        messages: vec![Message::User(vec![UserBlock::Text(args.message.clone())])],
         max_tokens: args.max_tokens,
         extra: serde_json::Value::Null,
         prompt: None,
@@ -319,7 +314,7 @@ async fn call_complete(
     let response = client.complete(request).await?;
     let end_to_end = started.elapsed();
 
-    let reply = text_of(&response.message);
+    let reply = text_of(&response.content);
     println!("{}", output::labelled(label, &reply));
 
     Ok(Measure {

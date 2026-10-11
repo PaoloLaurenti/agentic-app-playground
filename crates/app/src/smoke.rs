@@ -10,7 +10,7 @@ use crate::text_of;
 pub fn smoke_ok(_req: &LlmRequest, resp: &LlmResponse) -> Verdict {
     Verdict {
         name: "smoke_ok",
-        value: resp.stop_reason == StopReason::EndTurn && !text_of(&resp.message).trim().is_empty(),
+        value: resp.stop_reason == StopReason::EndTurn && !text_of(&resp.content).trim().is_empty(),
     }
 }
 
@@ -18,7 +18,7 @@ pub fn smoke_ok(_req: &LlmRequest, resp: &LlmResponse) -> Verdict {
 mod tests {
     use std::time::Duration;
 
-    use llm_core::{ContentBlock, Message, ModelId, Role, Usage};
+    use llm_core::{AssistantBlock, Message, ModelId, Usage, UserBlock};
 
     use super::*;
 
@@ -26,10 +26,7 @@ mod tests {
         LlmRequest {
             model: ModelId::new("test-model"),
             system: vec![],
-            messages: vec![Message {
-                role: Role::User,
-                content: vec![ContentBlock::Text("Ready?".into())],
-            }],
+            messages: vec![Message::User(vec![UserBlock::Text("Ready?".into())])],
             max_tokens: 50,
             extra: serde_json::Value::Null,
             prompt: None,
@@ -39,10 +36,7 @@ mod tests {
 
     fn response(stop_reason: StopReason, reply: &str) -> LlmResponse {
         LlmResponse {
-            message: Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text(reply.into())],
-            },
+            content: vec![AssistantBlock::Text(reply.into())],
             stop_reason,
             usage: Usage::default(),
             latency: Duration::from_millis(500),

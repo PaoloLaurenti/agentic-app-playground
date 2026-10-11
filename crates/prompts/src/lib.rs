@@ -1,7 +1,7 @@
 //! The prompts the app sends, compiled into the binary from the files in `prompts/` (ADR 0009):
 //! a commit fixes exactly which prompt runs, and nothing at runtime can change it.
 
-use llm_core::{ContentBlock, Message, OutputSchema, PromptRef, Role, SystemBlock};
+use llm_core::{Message, OutputSchema, PromptRef, SystemBlock, UserBlock};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -102,10 +102,9 @@ impl Prompt {
             let text = fill_in(&message.content, vars)?;
             match message.role {
                 PromptRole::System => rendered.system.push(SystemBlock::Text(text)),
-                PromptRole::User => rendered.messages.push(Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::Text(text)],
-                }),
+                PromptRole::User => rendered
+                    .messages
+                    .push(Message::User(vec![UserBlock::Text(text)])),
             }
         }
         Ok(rendered)
@@ -198,10 +197,9 @@ content = "My name is {{name}}."
                     version: 3,
                 },
                 system: vec![SystemBlock::Text("Greet the user by name.\n".into())],
-                messages: vec![Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::Text("My name is Giulia.".into())],
-                }],
+                messages: vec![Message::User(vec![UserBlock::Text(
+                    "My name is Giulia.".into()
+                )])],
             }
         );
     }
@@ -226,9 +224,12 @@ content = "My name is {{name}}."
     }
 
     fn user_text(rendered: &Rendered) -> &str {
-        match &rendered.messages[0].content[0] {
-            ContentBlock::Text(text) => text,
-            other => panic!("expected text, got {other:?}"),
+        match &rendered.messages[0] {
+            Message::User(blocks) => match &blocks[0] {
+                UserBlock::Text(text) => text,
+                other => panic!("expected text, got {other:?}"),
+            },
+            other => panic!("expected a user message, got {other:?}"),
         }
     }
 

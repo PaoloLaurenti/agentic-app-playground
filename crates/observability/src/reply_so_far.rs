@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use llm_core::{ContentBlock, LlmEvent, LlmResponse, Message, Role, StopReason, Usage};
+use llm_core::{AssistantBlock, LlmEvent, LlmResponse, StopReason, Usage};
 
 /// What a stream has said so far.
 #[derive(Default)]
@@ -37,10 +37,7 @@ impl ReplySoFar {
     pub(crate) fn into_response(self) -> Option<LlmResponse> {
         let (usage, latency) = self.metadata?;
         Some(LlmResponse {
-            message: Message {
-                role: Role::Assistant,
-                content: vec![ContentBlock::Text(self.text)],
-            },
+            content: vec![AssistantBlock::Text(self.text)],
             stop_reason: self.stop_reason?,
             usage,
             latency,
